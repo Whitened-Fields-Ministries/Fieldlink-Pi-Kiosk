@@ -16,8 +16,11 @@ KEYBOARD_KEYMAP=us
 KEYBOARD_LAYOUT="English (US)"
 TIMEZONE_DEFAULT=America/New_York
 FIRST_USER_NAME=fieldlink
-FIRST_USER_PASS=
+# pi-gen requires a password to disable the first-boot rename; the workflow
+# uses a random one and discards it. Put anything here for a local build.
+FIRST_USER_PASS=change-me-local-build
 DISABLE_FIRST_BOOT_USER_RENAME=1
 ENABLE_SSH=1
+PUBKEY_ONLY_SSH=1
 ENABLE_CLOUD_INIT=1
 STAGE_LIST="stage0 stage1 stage2 stage-fieldlink"

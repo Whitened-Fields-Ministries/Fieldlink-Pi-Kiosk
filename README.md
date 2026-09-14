@@ -29,8 +29,9 @@ apt updates, read-only root, diagnostics and factory reset (milestone 3) come ne
    Everything the display remembers is in that one directory.
 5. If the app exits (crash, Ctrl+Shift+Q), systemd restarts it after 3 s.
 
-The image is identical for every church. The first user is `fieldlink` with a **locked** password;
-SSH is enabled but only reachable with a key. `hdmi_enable_4kp60=1` is set for the Pi 4.
+The image is identical for every church. The first user is `fieldlink`; its password is random per
+build and thrown away (pi-gen needs one to skip the first-boot rename wizard, which would otherwise
+take over the TV), and SSH accepts keys only. `hdmi_enable_4kp60=1` is set for the Pi 4.
 
 ## Releases
 

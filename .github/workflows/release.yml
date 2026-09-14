@@ -83,6 +83,18 @@ jobs:
           rm -f ./*amd64* ./*.sha256
           ls -l
 
+      # pi-gen insists on a password when the first-boot user rename is disabled
+      # (the rename wizard would otherwise take over tty1 and the TV). The image
+      # is public, so the password is random, masked and discarded: the account
+      # is reachable only with an SSH key (dispatch input, or Imager's OS
+      # customisation through cloud-init).
+      - name: Throwaway password for the first user
+        id: pw
+        run: |
+          pw="$(openssl rand -base64 30 | tr -d '/+=' | cut -c1-32)"
+          echo "::add-mask::$pw"
+          echo "pw=$pw" >> "$GITHUB_OUTPUT"
+
       - name: Build with pi-gen
         id: pigen
         uses: usimd/pi-gen-action@v1
@@ -101,9 +113,10 @@ jobs:
           keyboard-layout: English (US)
           timezone: America/New_York
           username: fieldlink
-          password: ''
+          password: ${{ steps.pw.outputs.pw }}
           disable-first-boot-user-rename: 1
           enable-ssh: 1
+          pubkey-only-ssh: 1
           pubkey-ssh-first-user: ${{ github.event.inputs.ssh_pubkey }}
           enable-cloud-init: 1
           verbose-output: true
