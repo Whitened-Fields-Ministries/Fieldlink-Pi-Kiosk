@@ -66,7 +66,7 @@ larger list with `subitems_url`. Until then, *Use custom* with the downloaded `.
 
 ## Flash-and-check (Pi 4, Ethernet, milestone 1)
 
-1. Actions → **Image** → *Run workflow* on the branch, paste your SSH public key in the input.
+1. The **Image** workflow runs on the PR (or Actions → *Run workflow* on `main`, where an SSH public key can be given).
    Download the `fieldlink-kiosk-image` artifact and unzip it to get the `.img.xz`.
 2. Raspberry Pi Imager → *Choose OS* → *Use custom* → the `.img.xz`. Skip OS customisation for
    this test (it goes through cloud-init and is a separate thing to verify). Write the card.

@@ -3,8 +3,8 @@ name: Image
 # Builds the Raspberry Pi image: Raspberry Pi OS Lite (trixie, arm64) from
 # pi-gen plus the kiosk .deb, as an .img.xz with a Raspberry Pi Imager list.
 #
-#   workflow_dispatch  →  dev image, kept as a workflow artifact (flash-and-check
-#                         before tagging). Optionally bakes in an SSH public key.
+#   pull_request /     →  dev image, kept as a workflow artifact (flash-and-check
+#   workflow_dispatch     before tagging). Dispatch can bake in an SSH public key.
 #   tag v*             →  the same build attached to a GitHub release together
 #                         with the .deb files and os-list.json; the tag must
 #                         match app/package.json.
@@ -14,6 +14,10 @@ name: Image
 on:
   push:
     tags: ['v*']
+  # A PR that touches the image builds it too (artifact only, ~30 min): that is
+  # how a dev image is tested on a Pi before it is merged and tagged.
+  pull_request:
+    paths: ['image/**', '.github/workflows/release.yml', '.github/actions/build-deb/**']
   workflow_dispatch:
     inputs:
       ssh_pubkey:
