@@ -1,0 +1,24 @@
+#!/bin/sh
+# Started by fieldlink-kiosk.service as the kiosk user. Runs cage with the
+# FieldLink Pi Kiosk app as its only client.
+#
+#   cage -d   no client-side decorations
+#
+# Electron flags:
+#   --ozone-platform=wayland   talk to cage directly (no Xwayland installed)
+#   --ignore-gpu-blocklist     Chromium blocklists the Pi's V3D/Mesa combination
+#                              by default and would fall back to software rendering
+#   --disable-features=…       nothing pairs a lobby TV with a printer or MIDI
+
+set -e
+
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=cage
+export MOZ_ENABLE_WAYLAND=1
+export FIELDLINK_KIOSK_STATE_DIR="${FIELDLINK_KIOSK_STATE_DIR:-/var/lib/fieldlink-kiosk}"
+
+exec /usr/bin/cage -d -- /opt/fieldlink-pi-kiosk/fieldlink-pi-kiosk \
+  --ozone-platform=wayland \
+  --ignore-gpu-blocklist \
+  --disable-features=Printing,WebMidi \
+  "$@"

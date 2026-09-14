@@ -1,0 +1,25 @@
+{
+  "name": "fieldlink-pi-kiosk",
+  "version": "0.1.0",
+  "description": "Field Link Missions kiosk display for Raspberry Pi (Linux shell)",
+  "author": "Field Link Missions",
+  "homepage": "https://fieldlinkmissions.com",
+  "license": "UNLICENSED",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Whitened-Fields-Ministries/Fieldlink-Pi-Kiosk.git"
+  },
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node scripts/check-recovery-html.js",
+    "smoke": "electron . --smoke-test",
+    "build:deb": "scripts/build-deb.sh arm64",
+    "build:deb:amd64": "scripts/build-deb.sh amd64"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "44.3.0"
+  }
+}

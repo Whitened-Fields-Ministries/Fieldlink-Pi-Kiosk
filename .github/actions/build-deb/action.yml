@@ -1,0 +1,37 @@
+name: Build fieldlink-pi-kiosk .deb
+description: Packages the Electron shell in app/ as a Debian package for one architecture.
+inputs:
+  arch:
+    description: Debian architecture (arm64 or amd64)
+    required: true
+outputs:
+  deb:
+    description: Path of the built .deb
+    value: ${{ steps.build.outputs.deb }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: app/package-lock.json
+    - name: Install dependencies
+      shell: bash
+      working-directory: app
+      run: npm ci --no-audit --no-fund
+      env:
+        ELECTRON_GET_TIMEOUT: '120000'
+    - name: Syntax checks
+      shell: bash
+      working-directory: app
+      run: npm run check
+    - name: Build .deb (${{ inputs.arch }})
+      id: build
+      shell: bash
+      working-directory: app
+      run: |
+        scripts/build-deb.sh "${{ inputs.arch }}"
+        echo "deb=app/$(ls dist/fieldlink-pi-kiosk_*_${{ inputs.arch }}.deb | head -1)" >> "$GITHUB_OUTPUT"
+      env:
+        ELECTRON_GET_TIMEOUT: '120000'

@@ -1,0 +1,7 @@
+node_modules/
+app/dist/
+image/stage-fieldlink/00-kiosk/files/*.deb
+pi-gen/
+deploy/
+*.img
+*.img.xz

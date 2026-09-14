@@ -1,0 +1,38 @@
+# FieldLink kiosk display: cage (single-window Wayland compositor) running the
+# Electron shell on the first virtual console, as the unprivileged kiosk user.
+# Pattern from the cage wiki ("Starting Cage on boot with systemd"): the PAM
+# session gives the user a logind seat and XDG_RUNTIME_DIR, so cage can open
+# the DRM and input devices without seatd or root.
+[Unit]
+Description=FieldLink kiosk display (cage + FieldLink Pi Kiosk)
+Documentation=https://github.com/Whitened-Fields-Ministries/Fieldlink-Pi-Kiosk
+After=systemd-user-sessions.service plymouth-quit-wait.service systemd-logind.service dbus.socket
+Wants=dbus.socket systemd-logind.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+ConditionPathExists=/dev/tty0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/fieldlink-kiosk-session
+ExecStartPost=+/bin/sh -c 'chvt 1 || true'
+Restart=always
+RestartSec=3
+User=kiosk
+Group=kiosk
+PAMName=fieldlink-kiosk
+UtmpIdentifier=tty1
+UtmpMode=user
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+Environment=FIELDLINK_KIOSK_STATE_DIR=/var/lib/fieldlink-kiosk
+Environment=HOME=/var/lib/fieldlink-kiosk
+
+[Install]
+WantedBy=graphical.target
+Alias=display-manager.service

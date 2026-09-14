@@ -1,0 +1,7 @@
+cage
+xkb-data
+libgl1-mesa-dri
+libegl-mesa0
+libgles2
+fonts-liberation
+fonts-noto-color-emoji
