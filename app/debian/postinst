@@ -1,0 +1,43 @@
+#!/bin/sh
+set -e
+
+APP_DIR=/opt/fieldlink-pi-kiosk
+STATE_DIR=/var/lib/fieldlink-kiosk
+
+case "$1" in
+  configure)
+    # The unprivileged account the display runs as. Its home is the state
+    # directory: config.json (the kiosk URL), kiosk.log and Chromium's cache.
+    if ! getent group kiosk >/dev/null; then
+      addgroup --system kiosk
+    fi
+    if ! getent passwd kiosk >/dev/null; then
+      adduser --system --ingroup kiosk --home "$STATE_DIR" --no-create-home \
+        --shell /usr/sbin/nologin --gecos "FieldLink kiosk display" kiosk
+    fi
+    for grp in video render input audio; do
+      if getent group "$grp" >/dev/null; then adduser kiosk "$grp" >/dev/null || true; fi
+    done
+    mkdir -p "$STATE_DIR"
+    chown kiosk:kiosk "$STATE_DIR"
+    chmod 0750 "$STATE_DIR"
+
+    # Chromium's setuid sandbox helper (same as every Electron .deb does).
+    if [ -f "$APP_DIR/chrome-sandbox" ]; then
+      chown root:root "$APP_DIR/chrome-sandbox"
+      chmod 4755 "$APP_DIR/chrome-sandbox"
+    fi
+
+    # The unit is enabled by the image build (and by hand on a stock Pi OS);
+    # here we only reload systemd and restart a running display so the new
+    # build is what is on screen.
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload || true
+      if systemctl is-active --quiet fieldlink-kiosk.service; then
+        systemctl try-restart fieldlink-kiosk.service || true
+      fi
+    fi
+    ;;
+esac
+
+exit 0

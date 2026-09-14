@@ -1,0 +1,9 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: fieldlink-pi-kiosk
+Source: https://github.com/Whitened-Fields-Ministries/Fieldlink-Pi-Kiosk
+
+Files: *
+Copyright: Field Link Missions
+License: proprietary
+ All rights reserved. Bundles Electron (MIT) and Chromium (BSD-3-Clause);
+ their licences ship in /opt/fieldlink-pi-kiosk/LICENSE and LICENSES.chromium.html.

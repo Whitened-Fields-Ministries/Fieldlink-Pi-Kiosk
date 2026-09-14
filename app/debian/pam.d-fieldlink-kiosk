@@ -1,0 +1,6 @@
+# PAM stack for the fieldlink-kiosk systemd unit (PAMName=fieldlink-kiosk).
+# Only what a logind-managed seat needs: no password, no motd, no lastlog.
+auth     required pam_unix.so nullok
+account  required pam_unix.so
+session  required pam_unix.so
+session  required pam_systemd.so

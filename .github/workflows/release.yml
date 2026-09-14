@@ -1,0 +1,200 @@
+name: Image
+
+# Builds the Raspberry Pi image: Raspberry Pi OS Lite (trixie, arm64) from
+# pi-gen plus the kiosk .deb, as an .img.xz with a Raspberry Pi Imager list.
+#
+#   pull_request /     →  dev image, kept as a workflow artifact (flash-and-check
+#   workflow_dispatch     before tagging). Dispatch can bake in an SSH public key.
+#   tag v*             →  the same build attached to a GitHub release together
+#                         with the .deb files and os-list.json; the tag must
+#                         match app/package.json.
+#
+# Both jobs run on the free arm64 runner, so pi-gen builds natively (no QEMU).
+
+on:
+  push:
+    tags: ['v*']
+  # A PR that touches the image builds it too (artifact only, ~30 min): that is
+  # how a dev image is tested on a Pi before it is merged and tagged.
+  pull_request:
+    paths: ['image/**', '.github/workflows/release.yml', '.github/actions/build-deb/**']
+  workflow_dispatch:
+    inputs:
+      ssh_pubkey:
+        description: SSH public key for the fieldlink user (dev images only; leave empty for none)
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    name: Build .deb
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          v="$(node -p "require('./app/package.json').version")"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$v" ]]; then
+            echo "::error::tag ${GITHUB_REF#refs/tags/} does not match app/package.json version $v"; exit 1
+          fi
+
+      - uses: ./.github/actions/build-deb
+        with:
+          arch: arm64
+      - uses: ./.github/actions/build-deb
+        with:
+          arch: amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fieldlink-pi-kiosk-deb
+          path: |
+            app/dist/*.deb
+            app/dist/*.sha256
+          if-no-files-found: error
+
+  image:
+    name: Build image
+    needs: deb
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.deb.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the .deb into the stage
+        uses: actions/download-artifact@v4
+        with:
+          name: fieldlink-pi-kiosk-deb
+          path: image/stage-fieldlink/00-kiosk/files
+
+      - name: Keep only the arm64 package in the stage
+        run: |
+          cd image/stage-fieldlink/00-kiosk/files
+          rm -f ./*amd64* ./*.sha256
+          ls -l
+
+      # pi-gen insists on a password when the first-boot user rename is disabled
+      # (the rename wizard would otherwise take over tty1 and the TV). The image
+      # is public, so the password is random, masked and discarded: the account
+      # is reachable only with an SSH key (dispatch input, or Imager's OS
+      # customisation through cloud-init).
+      - name: Throwaway password for the first user
+        id: pw
+        run: |
+          pw="$(openssl rand -base64 30 | tr -d '/+=' | cut -c1-32)"
+          echo "::add-mask::$pw"
+          echo "pw=$pw" >> "$GITHUB_OUTPUT"
+
+      - name: Build with pi-gen
+        id: pigen
+        uses: usimd/pi-gen-action@v1
+        with:
+          image-name: fieldlink-kiosk
+          pi-gen-version: arm64
+          pi-gen-release: FieldLink kiosk ${{ env.VERSION }}
+          release: trixie
+          stage-list: stage0 stage1 stage2 ./image/stage-fieldlink
+          export-last-stage-only: true
+          compression: xz
+          compression-level: 6
+          hostname: fieldlink-kiosk
+          locale: en_US.UTF-8
+          keyboard-keymap: us
+          keyboard-layout: English (US)
+          timezone: America/New_York
+          username: fieldlink
+          password: ${{ steps.pw.outputs.pw }}
+          disable-first-boot-user-rename: 1
+          enable-ssh: 1
+          # pi-gen refuses PUBKEY_ONLY_SSH without a key to install; without one
+          # the random discarded password above is what keeps the account shut.
+          pubkey-only-ssh: ${{ github.event.inputs.ssh_pubkey != '' && '1' || '0' }}
+          pubkey-ssh-first-user: ${{ github.event.inputs.ssh_pubkey }}
+          enable-cloud-init: 1
+          verbose-output: true
+          docker-opts: -e FIELDLINK_IMAGE_VERSION=${{ env.VERSION }}
+
+      - name: Name, checksum and describe the image
+        id: out
+        run: |
+          set -euo pipefail
+          src="${{ steps.pigen.outputs.image-path }}"
+          test -f "$src"
+          mkdir -p out
+          name="fieldlink-kiosk-${VERSION}-arm64.img.xz"
+          mv "$src" "out/$name"
+          cd out
+          sha256sum "$name" > "$name.sha256"
+          # Raspberry Pi Imager wants the size and sha256 of the *uncompressed* image.
+          extract_size=$(xz -dc "$name" | wc -c)
+          extract_sha256=$(xz -dc "$name" | sha256sum | cut -d' ' -f1)
+          download_size=$(stat -c %s "$name")
+          download_sha256=$(cut -d' ' -f1 "$name.sha256")
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}"
+          cat > os-list.json <<EOF
+          {
+            "os_list": [
+              {
+                "name": "FieldLink Kiosk ${VERSION}",
+                "description": "Field Link Missions lobby display. Boots to a pairing code; link it from FieldLink Admin → Kiosk.",
+                "icon": "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/image/imager/icon.png",
+                "website": "https://fieldlinkmissions.com",
+                "url": "${base}/${name}",
+                "release_date": "$(date -u +%Y-%m-%d)",
+                "extract_size": ${extract_size},
+                "extract_sha256": "${extract_sha256}",
+                "image_download_size": ${download_size},
+                "image_download_sha256": "${download_sha256}",
+                "init_format": "cloudinit-rpi",
+                "devices": ["pi5-64bit", "pi4-64bit"]
+              }
+            ]
+          }
+          EOF
+          python3 -m json.tool os-list.json >/dev/null
+          cat os-list.json
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fieldlink-kiosk-image
+          path: out/*
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Collect release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/download-artifact@v4
+        with:
+          name: fieldlink-pi-kiosk-deb
+          path: out
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FieldLink Kiosk ${{ env.VERSION }}
+          body: |
+            Raspberry Pi kiosk image `${{ steps.out.outputs.name }}` (Raspberry Pi OS Lite trixie, arm64, Pi 4 and Pi 5) and the kiosk app package.
+
+            **Flash it** with Raspberry Pi Imager → *Use custom*, or add this list as a repository: `https://github.com/${{ github.repository }}/releases/latest/download/os-list.json`.
+          files: |
+            out/*.img.xz
+            out/*.img.xz.sha256
+            out/os-list.json
+            out/*.deb
+            out/*.deb.sha256
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

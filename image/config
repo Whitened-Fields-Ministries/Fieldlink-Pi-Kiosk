@@ -1,0 +1,26 @@
+# pi-gen configuration for a local build (the workflow passes the same values
+# through usimd/pi-gen-action). Build with the pi-gen *arm64* branch:
+#
+#   git clone --branch arm64 https://github.com/RPi-Distro/pi-gen.git
+#   cp -r /path/to/Fieldlink-Pi-Kiosk/image/stage-fieldlink pi-gen/
+#   cp /path/to/Fieldlink-Pi-Kiosk/image/config pi-gen/config
+#   cd pi-gen && touch stage3/SKIP stage4/SKIP stage5/SKIP stage2/SKIP_IMAGES && ./build-docker.sh
+#
+IMG_NAME=fieldlink-kiosk
+RELEASE=trixie
+DEPLOY_COMPRESSION=xz
+COMPRESSION_LEVEL=6
+TARGET_HOSTNAME=fieldlink-kiosk
+LOCALE_DEFAULT=en_US.UTF-8
+KEYBOARD_KEYMAP=us
+KEYBOARD_LAYOUT="English (US)"
+TIMEZONE_DEFAULT=America/New_York
+FIRST_USER_NAME=fieldlink
+# pi-gen requires a password to disable the first-boot rename; the workflow
+# uses a random one and discards it. Put anything here for a local build.
+FIRST_USER_PASS=change-me-local-build
+DISABLE_FIRST_BOOT_USER_RENAME=1
+ENABLE_SSH=1
+PUBKEY_ONLY_SSH=1
+ENABLE_CLOUD_INIT=1
+STAGE_LIST="stage0 stage1 stage2 stage-fieldlink"

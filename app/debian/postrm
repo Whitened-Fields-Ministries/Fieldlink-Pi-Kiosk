@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  purge)
+    # The kiosk URL and log go only on purge; a plain remove keeps the pairing.
+    rm -rf /var/lib/fieldlink-kiosk
+    if getent passwd kiosk >/dev/null; then deluser --system kiosk >/dev/null 2>&1 || true; fi
+    if getent group kiosk >/dev/null; then delgroup --system kiosk >/dev/null 2>&1 || true; fi
+    ;;
+  remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    ;;
+esac
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi
+
+exit 0

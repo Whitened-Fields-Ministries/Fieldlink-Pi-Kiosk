@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  remove)
+    if [ -d /run/systemd/system ]; then
+      systemctl stop fieldlink-kiosk.service 2>/dev/null || true
+      systemctl disable fieldlink-kiosk.service 2>/dev/null || true
+    fi
+    ;;
+esac
+
+exit 0
