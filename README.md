@@ -32,7 +32,9 @@ apt updates, read-only root, diagnostics and factory reset (milestone 3) come ne
 The image is identical for every church. The first user is `fieldlink`; its password is random per
 build and thrown away (pi-gen needs one to skip the first-boot rename wizard, which would otherwise
 take over the TV), so SSH is only usable with a key: one baked in by a *Run workflow* build, or one
-added through Imager's OS customisation. `hdmi_enable_4kp60=1` is set for the Pi 4.
+added through Imager's OS customisation. `hdmi_enable_4kp60=1` is set for the Pi 4. The image has no cloud-init and the first-boot
+rename wizard (`userconfig.service`) is masked: cloud-init's Raspberry Pi hook would otherwise
+create a `pi` user and put the wizard's keyboard dialog on the TV instead of the pairing code.
 
 ## Releases
 
@@ -71,7 +73,8 @@ larger list with `subitems_url`. Until then, *Use custom* with the downloaded `.
 1. The **Image** workflow runs on the PR (or Actions → *Run workflow* on `main`, where an SSH public key can be given).
    Download the `fieldlink-kiosk-image` artifact and unzip it to get the `.img.xz`.
 2. Raspberry Pi Imager → *Choose OS* → *Use custom* → the `.img.xz`. Skip OS customisation for
-   this test (it goes through cloud-init and is a separate thing to verify). Write the card.
+   this first test; it can add an SSH key later (classic `firstrun.sh` path, no cloud-init in
+   this image). Write the card.
 3. Ethernet cable in, HDMI into the port **nearest the USB‑C connector**, a real 3 A supply.
    Power on with the TV on.
 4. **Expect within ~30 s:** a dark screen with "Link this display to FieldLink" and a
