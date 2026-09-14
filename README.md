@@ -31,7 +31,8 @@ apt updates, read-only root, diagnostics and factory reset (milestone 3) come ne
 
 The image is identical for every church. The first user is `fieldlink`; its password is random per
 build and thrown away (pi-gen needs one to skip the first-boot rename wizard, which would otherwise
-take over the TV), and SSH accepts keys only. `hdmi_enable_4kp60=1` is set for the Pi 4.
+take over the TV), so SSH is only usable with a key: one baked in by a *Run workflow* build, or one
+added through Imager's OS customisation. `hdmi_enable_4kp60=1` is set for the Pi 4.
 
 ## Releases
 

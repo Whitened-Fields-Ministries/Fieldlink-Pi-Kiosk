@@ -116,7 +116,9 @@ jobs:
           password: ${{ steps.pw.outputs.pw }}
           disable-first-boot-user-rename: 1
           enable-ssh: 1
-          pubkey-only-ssh: 1
+          # pi-gen refuses PUBKEY_ONLY_SSH without a key to install; without one
+          # the random discarded password above is what keeps the account shut.
+          pubkey-only-ssh: ${{ github.event.inputs.ssh_pubkey != '' && '1' || '0' }}
           pubkey-ssh-first-user: ${{ github.event.inputs.ssh_pubkey }}
           enable-cloud-init: 1
           verbose-output: true
