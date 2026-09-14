@@ -106,7 +106,6 @@ jobs:
           enable-ssh: 1
           pubkey-ssh-first-user: ${{ github.event.inputs.ssh_pubkey }}
           enable-cloud-init: 1
-          increase-runner-disk-size: true
           verbose-output: true
           docker-opts: -e FIELDLINK_IMAGE_VERSION=${{ env.VERSION }}
 
