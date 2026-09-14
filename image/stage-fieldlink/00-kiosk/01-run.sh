@@ -17,10 +17,16 @@ EOF
 
 # The display is the only thing this machine does: start it at boot instead of
 # a login prompt on tty1, and never rename the first user on first boot.
+# userconfig.service is the first-boot rename wizard from userconf-pi. It is
+# not enabled in this image, but rename-user (which cloud-init's Raspberry Pi
+# hook calls after creating a user) would enable it; masking makes sure the
+# TV never shows a keyboard/username dialog instead of the pairing code.
 on_chroot << EOF
 systemctl set-default graphical.target
 systemctl enable fieldlink-kiosk.service
 systemctl disable getty@tty1.service
+systemctl mask userconfig.service
+rm -f /etc/xdg/autostart/piwiz.desktop
 EOF
 
 # Version marker for the recovery screen and support.

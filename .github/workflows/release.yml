@@ -120,7 +120,12 @@ jobs:
           # the random discarded password above is what keeps the account shut.
           pubkey-only-ssh: ${{ github.event.inputs.ssh_pubkey != '' && '1' || '0' }}
           pubkey-ssh-first-user: ${{ github.event.inputs.ssh_pubkey }}
-          enable-cloud-init: 1
+          # No cloud-init: on first boot it creates its default user "pi", and
+          # Raspberry Pi's cloud-init hook then runs rename-user, which enables
+          # the first-boot wizard (keyboard dialog + username prompt) on the TV.
+          # Imager's OS customisation still works through the classic
+          # firstrun.sh path shipped by raspberrypi-sys-mods.
+          enable-cloud-init: 0
           verbose-output: true
           docker-opts: -e FIELDLINK_IMAGE_VERSION=${{ env.VERSION }}
 
@@ -155,7 +160,7 @@ jobs:
                 "extract_sha256": "${extract_sha256}",
                 "image_download_size": ${download_size},
                 "image_download_sha256": "${download_sha256}",
-                "init_format": "cloudinit-rpi",
+                "init_format": "systemd",
                 "devices": ["pi5-64bit", "pi4-64bit"]
               }
             ]
