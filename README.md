@@ -71,44 +71,48 @@ create a `pi` user and put the wizard's keyboard dialog on the TV instead of the
 
 ## Releases
 
-Two workflows on the free arm64 runners (`ubuntu-24.04-arm`, native, no QEMU):
+Nothing builds on pull requests or merges; PRs only run the fast checks (`node --check`, the unit
+tests, shellcheck, the unit file and the workflow YAML; about 15 s). Building is driven by tags,
+two per version, on the free arm64 runners:
 
-- **Pull requests** run only the fast checks (`app.yml` → *Checks*): `node --check`, the unit
-  tests, shellcheck, the unit file and the workflow YAML. About a minute, no Electron download.
-- **Merging to `main`** builds. *App package* builds the arm64 and amd64 `.deb`, installs the
-  arm64 one on the runner, checks every shared library resolves (`ldd`) and starts the packaged
-  app under Xvfb (`--smoke-test`). *Image* (`release.yml`) builds the dev image and keeps it as
-  a workflow artifact; that is what gets flashed onto the test Pi. *Run workflow* on *Image*
-  does the same on demand, optionally with your SSH public key baked in for the `fieldlink` user.
-- **Pushing a tag** `vX.Y.Z` (which must equal `app/package.json`'s version) builds the image
-  again and publishes a GitHub release with the `.img.xz`, its checksum, the `.deb` files and
-  `os-list.json`.
+| Tag | What happens | Result |
+|---|---|---|
+| `vX.Y.Z-qa` | Builds the `.deb`, installs it on the runner, `ldd` + smoke test; builds the image with pi-gen (~10 min) | GitHub **pre-release** "FieldLink Kiosk X.Y.Z (QA)" with the `.img.xz`, checksum, `.deb` files and `os-list.json`. Flash this on the test Pi. |
+| `vX.Y.Z` | **No rebuild.** Finds the `vX.Y.Z-qa` release on the same commit, downloads and verifies its assets, points `os-list.json` at the prod URLs | GitHub release "FieldLink Kiosk X.Y.Z", marked *latest*: the download churches get. |
 
-An image build takes about 20–30 minutes. Cutting a release:
+`X.Y.Z` must equal `app/package.json`'s version, and the prod tag must point at the same commit as
+the QA tag (otherwise the workflow refuses, because the promoted image would not match the source).
+A QA build that needs redoing gets `vX.Y.Z-qa.2`, `-qa.3`…; promotion picks the newest one on the
+commit.
 
 ```bash
-# bump app/package.json version, commit, merge to main, then:
+# after the version bump has merged:
 git fetch origin main
-git tag -a vX.Y.Z origin/main -m "FieldLink Kiosk X.Y.Z"
-git push origin vX.Y.Z
+git tag -a v0.2.0-qa origin/main -m "FieldLink Kiosk 0.2.0 QA"
+git push origin v0.2.0-qa
+# … flash-and-check on the Pi from the v0.2.0-qa pre-release, then:
+git tag -a v0.2.0 origin/main -m "FieldLink Kiosk 0.2.0"
+git push origin v0.2.0
 ```
 
 ### Raspberry Pi Imager
 
-Every release ships `os-list.json`. The stable address of the newest one is
+Every release ships `os-list.json`. The stable address of the newest **production** one is
 
 ```
 https://github.com/Whitened-Fields-Ministries/Fieldlink-Pi-Kiosk/releases/latest/download/os-list.json
 ```
 
 which can be used as an Imager repository (`rpi-imager --repo <that url>`) or nested into a
-larger list with `subitems_url`. Until then, *Use custom* with the downloaded `.img.xz` works.
+larger list with `subitems_url`; QA pre-releases never become *latest*, so this only ever points at
+a promoted build. A QA list lives at `…/releases/download/vX.Y.Z-qa/os-list.json`. *Use custom*
+with the downloaded `.img.xz` always works too.
 
 ## Flash-and-check (Pi 4, Ethernet, milestone 1)
 
-1. Merge the PR (or Actions → **Image** → *Run workflow* on `main`, where an SSH public key can
-   be given). Open the *Image* run, download the `fieldlink-kiosk-image` artifact and unzip it to
-   get the `.img.xz`.
+1. Merge the PR and push the `vX.Y.Z-qa` tag (see *Releases*). Download the `.img.xz` from the
+   QA pre-release. For ssh during testing, add a user with your public key through Imager's OS
+   customisation (classic `firstrun.sh` path, no cloud-init in this image).
 2. Raspberry Pi Imager → *Choose OS* → *Use custom* → the `.img.xz`. Skip OS customisation for
    this first test; it can add an SSH key later (classic `firstrun.sh` path, no cloud-init in
    this image). Write the card.

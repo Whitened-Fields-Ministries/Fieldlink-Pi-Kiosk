@@ -1,71 +1,90 @@
-name: Image
+name: Release
 
-# Builds the Raspberry Pi image: Raspberry Pi OS Lite (trixie, arm64) from
-# pi-gen plus the kiosk .deb, as an .img.xz with a Raspberry Pi Imager list.
+# Nothing builds on pull requests or merges. Two tags per version:
 #
-#   push to main /     →  dev image, kept as a workflow artifact (flash-and-check
-#   workflow_dispatch     before tagging). Dispatch can bake in an SSH public key.
-#                         Pull requests only run the checks in app.yml.
-#   tag v*             →  the same build attached to a GitHub release together
-#                         with the .deb files and os-list.json; the tag must
-#                         match app/package.json.
+#   vX.Y.Z-qa   → QA. Builds the .deb (and proves it on the arm64 runner),
+#                 builds the Raspberry Pi image with pi-gen, and publishes a
+#                 GitHub *pre-release* with the image, checksums, .deb files and
+#                 the Raspberry Pi Imager os-list.json. This is what gets
+#                 flashed onto the test Pi. (vX.Y.Z-qa.2, -qa.3… for retries.)
+#   vX.Y.Z      → Prod. No rebuild: takes the assets of the QA release for the
+#                 same commit, verifies the checksums, points os-list.json at
+#                 the prod URLs and publishes them as the *latest* release —
+#                 the one FieldLink offers for download.
 #
-# Both jobs run on the free arm64 runner, so pi-gen builds natively (no QEMU).
+# X.Y.Z must equal app/package.json, and the prod tag must point at the same
+# commit as the QA tag it promotes. Both jobs run on the free arm64 runners.
 
 on:
-  # Every merge to main that touches the app or the image builds a dev image
-  # (artifact only, ~10 min): that is what gets flashed onto the test Pi. The
-  # "Should the image be built?" step below is the paths filter (a paths:
-  # filter here would also apply to tag pushes, which must always build).
   push:
-    branches: [main]
     tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      ssh_pubkey:
-        description: SSH public key for the fieldlink user (dev images only; leave empty for none)
-        required: false
-        default: ''
 
 permissions:
   contents: write
 
 jobs:
-  deb:
-    name: Build .deb
+  tag:
+    name: Classify tag
     runs-on: ubuntu-24.04-arm
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      build_image: ${{ steps.gate.outputs.build_image }}
+      version: ${{ steps.t.outputs.version }}
+      channel: ${{ steps.t.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Should the image be built?
-        id: gate
+      - id: t
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            echo "build_image=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          changed="$(git diff --name-only HEAD^ HEAD -- app image .github/workflows/release.yml .github/actions/build-deb 2>/dev/null || echo forced)"
-          if [ -n "$changed" ]; then echo "build_image=true" >> "$GITHUB_OUTPUT"; echo "$changed" | head -20; else echo "build_image=false" >> "$GITHUB_OUTPUT"; echo "nothing under app/ or image/ changed — no image build"; fi
+          tag="${GITHUB_REF#refs/tags/}"
+          pkg="$(node -p "require('./app/package.json').version")"
+          if [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-qa(\.[0-9]+)?$ ]]; then channel=qa; version="${BASH_REMATCH[1]}"
+          elif [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then channel=prod; version="${BASH_REMATCH[1]}"
+          else echo "::error::tag $tag is neither vX.Y.Z-qa nor vX.Y.Z"; exit 1; fi
+          if [[ "$version" != "$pkg" ]]; then echo "::error::tag $tag does not match app/package.json version $pkg"; exit 1; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "$tag → $channel $version"
 
-      - name: Version
-        id: version
-        run: |
-          v="$(node -p "require('./app/package.json').version")"
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$v" ]]; then
-            echo "::error::tag ${GITHUB_REF#refs/tags/} does not match app/package.json version $v"; exit 1
-          fi
+  deb:
+    name: QA · build and test .deb
+    needs: tag
+    if: needs.tag.outputs.channel == 'qa'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
 
-      - uses: ./.github/actions/build-deb
+      - name: Build arm64 package
+        uses: ./.github/actions/build-deb
         with:
           arch: arm64
-      - uses: ./.github/actions/build-deb
+      - name: Build amd64 package (Debian VM test loop)
+        uses: ./.github/actions/build-deb
         with:
           arch: amd64
+
+      - name: Install the arm64 package on this runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+          # cage/NetworkManager are not used by the smoke test (it runs under
+          # Xvfb) but the package depends on them, so let apt resolve everything the Pi will.
+          sudo apt-get install -y ./app/dist/fieldlink-pi-kiosk_*_arm64.deb
+          dpkg -s fieldlink-pi-kiosk | head -8
+          test -x /opt/fieldlink-pi-kiosk/fieldlink-pi-kiosk
+          test -u /opt/fieldlink-pi-kiosk/chrome-sandbox
+          id kiosk
+          systemctl cat fieldlink-kiosk.service >/dev/null
+
+      - name: Check shared libraries resolve
+        run: |
+          missing=$(ldd /opt/fieldlink-pi-kiosk/fieldlink-pi-kiosk | grep 'not found' || true)
+          if [ -n "$missing" ]; then echo "$missing"; echo "::error::unresolved shared libraries — add them to app/debian/control.in"; exit 1; fi
+          echo "all shared libraries resolved"
+
+      - name: Smoke test (packaged app starts, renders the recovery screen, receives the corner-hold gesture)
+        run: |
+          xvfb-run -a --server-args='-screen 0 1920x1080x24' \
+            /opt/fieldlink-pi-kiosk/fieldlink-pi-kiosk --smoke-test --no-sandbox --disable-gpu 2>&1 | tee smoke.log
+          grep -q 'smoke-test: recovery screen loaded (ok)' smoke.log
+          grep -q 'smoke-test: corner-hold gesture received' smoke.log
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,13 +95,13 @@ jobs:
           if-no-files-found: error
 
   image:
-    name: Build image
-    needs: deb
-    if: needs.deb.outputs.build_image == 'true'
+    name: QA · build image and publish pre-release
+    needs: [tag, deb]
+    if: needs.tag.outputs.channel == 'qa'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     env:
-      VERSION: ${{ needs.deb.outputs.version }}
+      VERSION: ${{ needs.tag.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -101,8 +120,7 @@ jobs:
       # pi-gen insists on a password when the first-boot user rename is disabled
       # (the rename wizard would otherwise take over tty1 and the TV). The image
       # is public, so the password is random, masked and discarded: the account
-      # is reachable only with an SSH key (dispatch input, or Imager's OS
-      # customisation through cloud-init).
+      # is reachable only with an SSH key added through Imager's OS customisation.
       - name: Throwaway password for the first user
         id: pw
         run: |
@@ -134,10 +152,6 @@ jobs:
           password: ${{ steps.pw.outputs.pw }}
           disable-first-boot-user-rename: 1
           enable-ssh: 1
-          # pi-gen refuses PUBKEY_ONLY_SSH without a key to install; without one
-          # the random discarded password above is what keeps the account shut.
-          pubkey-only-ssh: ${{ github.event.inputs.ssh_pubkey != '' && '1' || '0' }}
-          pubkey-ssh-first-user: ${{ github.event.inputs.ssh_pubkey }}
           # No cloud-init: on first boot it creates its default user "pi", and
           # Raspberry Pi's cloud-init hook then runs rename-user, which enables
           # the first-boot wizard (keyboard dialog + username prompt) on the TV.
@@ -158,17 +172,24 @@ jobs:
           mv "$src" "out/$name"
           cd out
           sha256sum "$name" > "$name.sha256"
-          # Raspberry Pi Imager wants the size and sha256 of the *uncompressed* image.
-          extract_size=$(xz -dc "$name" | wc -c)
-          extract_sha256=$(xz -dc "$name" | sha256sum | cut -d' ' -f1)
+          # Raspberry Pi Imager wants the size and sha256 of the *uncompressed*
+          # image; one streaming pass does both.
+          read -r extract_sha256 extract_size < <(python3 -c '
+          import hashlib, lzma, sys
+          h = hashlib.sha256(); n = 0
+          with lzma.open(sys.argv[1]) as f:
+              for chunk in iter(lambda: f.read(1 << 22), b""):
+                  h.update(chunk); n += len(chunk)
+          print(h.hexdigest(), n)' "$name")
           download_size=$(stat -c %s "$name")
           download_sha256=$(cut -d' ' -f1 "$name.sha256")
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}"
-          cat > os-list.json <<EOF
+          tag="${GITHUB_REF#refs/tags/}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          cat > os-list.json <<JSON
           {
             "os_list": [
               {
-                "name": "FieldLink Kiosk ${VERSION}",
+                "name": "FieldLink Kiosk ${VERSION} (QA)",
                 "description": "Field Link Missions lobby display. Boots to a pairing code; link it from FieldLink Admin → Kiosk.",
                 "icon": "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/image/imager/icon.png",
                 "website": "https://fieldlinkmissions.com",
@@ -183,33 +204,95 @@ jobs:
               }
             ]
           }
-          EOF
+          JSON
           python3 -m json.tool os-list.json >/dev/null
           cat os-list.json
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: fieldlink-kiosk-image
-          path: out/*
-          compression-level: 0
-          if-no-files-found: error
-
-      - name: Collect release files
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Collect the .deb files
         uses: actions/download-artifact@v4
         with:
           name: fieldlink-pi-kiosk-deb
           path: out
 
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish QA pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FieldLink Kiosk ${{ env.VERSION }} (QA)
+          prerelease: true
+          make_latest: false
+          body: |
+            **QA build** of the Raspberry Pi kiosk image `${{ steps.out.outputs.name }}` (Raspberry Pi OS Lite trixie, arm64, Pi 4 and Pi 5) and the kiosk app package. For testing on the bench; not the download churches get.
+
+            Flash with Raspberry Pi Imager → *Use custom*, or add this list as a repository: `https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/os-list.json`.
+
+            When it passes the flash-and-check list, tag the same commit `v${{ env.VERSION }}` to publish it as the production release without rebuilding.
+          files: |
+            out/*.img.xz
+            out/*.img.xz.sha256
+            out/os-list.json
+            out/*.deb
+            out/*.deb.sha256
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  promote:
+    name: Prod · promote the QA release
+    needs: tag
+    if: needs.tag.outputs.channel == 'prod'
+    runs-on: ubuntu-24.04-arm
+    env:
+      VERSION: ${{ needs.tag.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Find the QA tag for this commit
+        id: qa
+        run: |
+          set -euo pipefail
+          prod_sha="$(git rev-parse "${GITHUB_REF}^{commit}")"
+          qa_tag=""
+          for t in $(git tag -l "v${VERSION}-qa" "v${VERSION}-qa.*" --sort=-v:refname); do
+            if [[ "$(git rev-parse "${t}^{commit}")" == "$prod_sha" ]]; then qa_tag="$t"; break; fi
+          done
+          if [[ -z "$qa_tag" ]]; then
+            echo "::error::no v${VERSION}-qa tag points at commit ${prod_sha}. Tag QA first, test it, then tag the same commit v${VERSION}."; exit 1
+          fi
+          gh release view "$qa_tag" --repo "$GITHUB_REPOSITORY" --json tagName,isPrerelease -q '.tagName + " prerelease=" + (.isPrerelease|tostring)'
+          echo "qa_tag=$qa_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the QA assets
+        run: |
+          set -euo pipefail
+          mkdir -p out && cd out
+          gh release download "${{ steps.qa.outputs.qa_tag }}" --repo "$GITHUB_REPOSITORY"
+          ls -l
+          for f in *.sha256; do sha256sum -c "$f"; done
+          # Same files, prod URLs and name.
+          python3 - <<PY
+          import json
+          p = 'os-list.json'
+          d = json.load(open(p))
+          for e in d['os_list']:
+              e['url'] = e['url'].replace('/releases/download/${{ steps.qa.outputs.qa_tag }}/', '/releases/download/v${VERSION}/')
+              e['name'] = e['name'].replace(' (QA)', '')
+          json.dump(d, open(p, 'w'), indent=2)
+          print(open(p).read())
+          PY
+
+      - name: Publish production release
         uses: softprops/action-gh-release@v2
         with:
           name: FieldLink Kiosk ${{ env.VERSION }}
+          prerelease: false
+          make_latest: true
           body: |
-            Raspberry Pi kiosk image `${{ steps.out.outputs.name }}` (Raspberry Pi OS Lite trixie, arm64, Pi 4 and Pi 5) and the kiosk app package.
+            Raspberry Pi kiosk image `fieldlink-kiosk-${{ env.VERSION }}-arm64.img.xz` (Raspberry Pi OS Lite trixie, arm64, Pi 4 and Pi 5) and the kiosk app package. Same build as `${{ steps.qa.outputs.qa_tag }}`, promoted after testing.
 
             **Flash it** with Raspberry Pi Imager → *Use custom*, or add this list as a repository: `https://github.com/${{ github.repository }}/releases/latest/download/os-list.json`.
           files: |
