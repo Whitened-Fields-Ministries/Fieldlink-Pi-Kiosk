@@ -1,15 +1,15 @@
 name: App package
 
-# Builds the Linux .deb of the kiosk shell on every change to app/ and proves it
-# runs: the arm64 package is installed on the (arm64) runner, its shared
-# libraries are checked with ldd and the packaged app starts under Xvfb.
-# Release publishing lives in release.yml.
+# Pull requests: fast checks only (syntax, unit tests, shell lint) — no Electron
+# download, no package build. Merges to main: build the arm64 and amd64 .deb,
+# install the arm64 one on the (arm64) runner, check every shared library
+# resolves and start the packaged app under Xvfb. Release publishing lives in
+# release.yml.
 
 on:
+  pull_request:
   push:
     branches: [main]
-    paths: ['app/**', '.github/actions/build-deb/**', '.github/workflows/app.yml']
-  pull_request:
     paths: ['app/**', '.github/actions/build-deb/**', '.github/workflows/app.yml']
   workflow_dispatch:
 
@@ -17,14 +17,38 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install (no Electron download)
+        working-directory: app
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Syntax checks and unit tests
+        working-directory: app
+        run: npm run check && npm test
+      - name: Lint packaging scripts and the unit
+        run: |
+          shellcheck -S warning -s sh app/debian/postinst app/debian/prerm app/debian/postrm app/debian/fieldlink-kiosk-session
+          shellcheck -S warning app/scripts/build-deb.sh image/stage-fieldlink/prerun.sh image/stage-fieldlink/00-kiosk/01-run.sh
+          systemd-analyze verify --man=no app/debian/fieldlink-kiosk.service 2>&1 | grep -v 'fieldlink-kiosk-session' || true
+          python3 -c "import yaml,sys; [yaml.safe_load(open(f)) for f in sys.argv[1:]]" .github/workflows/*.yml .github/actions/build-deb/action.yml
+
   deb:
     name: Build and test .deb
+    if: github.event_name != 'pull_request'
+    needs: checks
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
       - name: Build arm64 package
-        id: arm64
         uses: ./.github/actions/build-deb
         with:
           arch: arm64
@@ -34,18 +58,12 @@ jobs:
         with:
           arch: amd64
 
-      - name: Lint packaging scripts
-        run: |
-          shellcheck -S warning -s sh app/debian/postinst app/debian/prerm app/debian/postrm app/debian/fieldlink-kiosk-session
-          shellcheck -S warning app/scripts/build-deb.sh image/stage-fieldlink/prerun.sh image/stage-fieldlink/00-kiosk/01-run.sh
-          systemd-analyze verify --man=no app/debian/fieldlink-kiosk.service 2>&1 | grep -v 'fieldlink-kiosk-session' || true
-
       - name: Install the arm64 package on this runner
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb
-          # cage is not needed for the smoke test (it runs under Xvfb) but the
-          # package depends on it, so let apt resolve everything the Pi will.
+          # cage/NetworkManager are not used by the smoke test (it runs under
+          # Xvfb) but the package depends on them, so let apt resolve everything the Pi will.
           sudo apt-get install -y ./app/dist/fieldlink-pi-kiosk_*_arm64.deb
           dpkg -s fieldlink-pi-kiosk | head -8
           test -x /opt/fieldlink-pi-kiosk/fieldlink-pi-kiosk
@@ -59,11 +77,12 @@ jobs:
           if [ -n "$missing" ]; then echo "$missing"; echo "::error::unresolved shared libraries — add them to app/debian/control.in"; exit 1; fi
           echo "all shared libraries resolved"
 
-      - name: Smoke test (packaged app starts and renders the recovery screen)
+      - name: Smoke test (packaged app starts, renders the recovery screen, receives the corner-hold gesture)
         run: |
           xvfb-run -a --server-args='-screen 0 1920x1080x24' \
             /opt/fieldlink-pi-kiosk/fieldlink-pi-kiosk --smoke-test --no-sandbox --disable-gpu 2>&1 | tee smoke.log
           grep -q 'smoke-test: recovery screen loaded (ok)' smoke.log
+          grep -q 'smoke-test: corner-hold gesture received' smoke.log
 
       - name: Upload packages
         uses: actions/upload-artifact@v4

@@ -52,7 +52,13 @@ rule in the package allows the `kiosk` user to):
    for 45 s so a rebooted router can be rejoined without anyone touching the display.
 
 A keyboard gets the same picker on the TV (*Use a keyboard instead*), and the Ctrl+Shift+K screen
-has a Wi‑Fi block (current network, *Change network*, *Set up from a phone*). Raspberry Pi
+has a Wi‑Fi block (current network, *Change network*, *Set up from a phone*).
+
+**Getting to the settings screen without a keyboard.** Press and hold the top-left corner of the
+screen for four seconds with one finger (touch screen) or the mouse. A small progress ring shows
+while holding; the settings screen opens, and the same gesture closes it. It is detected in
+`app/preload.js` on every page the window shows, including the kiosk page, and only ever does
+what Ctrl+Shift+K does. The Windows shell can carry the same snippet for touch displays. Raspberry Pi
 Imager's OS customisation can still write Wi‑Fi credentials at flash time; NetworkManager picks
 those up before the app ever starts a hotspot.
 
@@ -67,13 +73,16 @@ create a `pi` user and put the wizard's keyboard dialog on the TV instead of the
 
 Two workflows on the free arm64 runners (`ubuntu-24.04-arm`, native, no QEMU):
 
-- **App package** (`app.yml`) — every change under `app/`: builds the arm64 and amd64 `.deb`,
-  installs the arm64 one on the runner, checks every shared library resolves (`ldd`) and starts
-  the packaged app under Xvfb (`--smoke-test`). Packages are workflow artifacts.
-- **Image** (`release.yml`) — *Run workflow* builds a dev image and keeps it as a workflow
-  artifact (optionally with your SSH public key baked in for the `fieldlink` user). Pushing a tag
-  `vX.Y.Z` (which must equal `app/package.json`'s version) builds the same image and publishes a
-  GitHub release with the `.img.xz`, its checksum, the `.deb` files and `os-list.json`.
+- **Pull requests** run only the fast checks (`app.yml` → *Checks*): `node --check`, the unit
+  tests, shellcheck, the unit file and the workflow YAML. About a minute, no Electron download.
+- **Merging to `main`** builds. *App package* builds the arm64 and amd64 `.deb`, installs the
+  arm64 one on the runner, checks every shared library resolves (`ldd`) and starts the packaged
+  app under Xvfb (`--smoke-test`). *Image* (`release.yml`) builds the dev image and keeps it as
+  a workflow artifact; that is what gets flashed onto the test Pi. *Run workflow* on *Image*
+  does the same on demand, optionally with your SSH public key baked in for the `fieldlink` user.
+- **Pushing a tag** `vX.Y.Z` (which must equal `app/package.json`'s version) builds the image
+  again and publishes a GitHub release with the `.img.xz`, its checksum, the `.deb` files and
+  `os-list.json`.
 
 An image build takes about 20–30 minutes. Cutting a release:
 
@@ -97,8 +106,9 @@ larger list with `subitems_url`. Until then, *Use custom* with the downloaded `.
 
 ## Flash-and-check (Pi 4, Ethernet, milestone 1)
 
-1. The **Image** workflow runs on the PR (or Actions → *Run workflow* on `main`, where an SSH public key can be given).
-   Download the `fieldlink-kiosk-image` artifact and unzip it to get the `.img.xz`.
+1. Merge the PR (or Actions → **Image** → *Run workflow* on `main`, where an SSH public key can
+   be given). Open the *Image* run, download the `fieldlink-kiosk-image` artifact and unzip it to
+   get the `.img.xz`.
 2. Raspberry Pi Imager → *Choose OS* → *Use custom* → the `.img.xz`. Skip OS customisation for
    this first test; it can add an SSH key later (classic `firstrun.sh` path, no cloud-init in
    this image). Write the card.
@@ -135,6 +145,9 @@ larger list with `subitems_url`. Until then, *Use custom* with the downloaded `.
 16. Keyboard path: Ctrl+Shift+K → *Change network* lists networks with signal and band; joining
     from there works the same.
 17. Over ssh, `journalctl -u fieldlink-kiosk -b | grep 'net:'` shows every decision the app made.
+18. Touch (or a mouse, if no touch screen is at hand): press and hold the top-left corner for four
+    seconds. **Expect:** a gold ring fills up in the corner, then the settings screen opens; the
+    same hold closes it. A short tap or a drag must do nothing.
 9. Optional, over ssh (`ssh fieldlink@<ip>` with the key from step 1):
    `journalctl -u fieldlink-kiosk -b` for the app log, `cat /etc/fieldlink-kiosk-image` for the
    build, `sudo cat /var/lib/fieldlink-kiosk/kiosk.log` for the app's own log.

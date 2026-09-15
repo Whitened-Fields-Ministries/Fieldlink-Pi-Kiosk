@@ -23,7 +23,9 @@
 //                                            started by hand
 //   ./config.json                            development only (npm start)
 //
-// Keyboard (a keyboard plugged into the Pi):
+// Keyboard (a keyboard plugged into the Pi) — or, with no keyboard, press and
+// hold the top-left corner of the screen for four seconds (touch or mouse) to
+// open and close the settings screen:
 //   Ctrl+Shift+K  open the settings / recovery screen
 //   Ctrl+Shift+R  reload the kiosk page
 //   Ctrl+Shift+Q  quit the app (systemd starts it again within seconds)
@@ -778,17 +780,29 @@ async function pollPairRequest() {
 
 ipcMain.handle('kiosk:pair-request', async (_e, { server } = {}) => { await startPairRequest(server); return stateForPage(); });
 
-// ── Keyboard shortcuts ───────────────────────────────────────────────────────
+// ── Keyboard shortcuts and the corner-hold gesture ───────────────────────────
+// The gesture itself is detected in preload.js (it needs the page's pointer
+// events); it only ever asks for the same thing Ctrl+Shift+K does.
+let smokeGestureSeen = false;
+ipcMain.on('kiosk:gesture', (e, { name } = {}) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  if (name !== 'corner-hold') return;
+  if (SMOKE_TEST) { smokeGestureSeen = true; return; }
+  toggleSettingsScreen('corner hold');
+});
+
 // Electron's globalShortcut is X11-only; under cage (Wayland) the window itself
 // is the only thing with focus, so the shortcuts come through before-input-event.
+function toggleSettingsScreen(source) {
+  log(`settings screen toggled (${source})`);
+  if (view === 'recovery' && recoveryReason === 'manual') { if (kioskUrl) showKiosk(); }
+  else showRecovery('manual');
+}
+
 function handleShortcut(input) {
   if (input.type !== 'keyDown' || !input.control || !input.shift || input.alt || input.meta) return false;
   const key = String(input.key || '').toUpperCase();
-  if (key === 'K') {
-    if (view === 'recovery' && recoveryReason === 'manual') { if (kioskUrl) showKiosk(); }
-    else showRecovery('manual');
-    return true;
-  }
+  if (key === 'K') { toggleSettingsScreen('Ctrl+Shift+K'); return true; }
   if (key === 'R') {
     if (kioskUrl) { invalidStreak = 0; showKiosk(); scheduleCheck(5000); }
     else if (win && !win.isDestroyed()) win.webContents.reload();
@@ -869,12 +883,20 @@ function createWindow() {
 function runSmokeTest() {
   const timer = setTimeout(() => { console.error('smoke-test: timed out'); app.exit(1); }, 60000);
   createWindow();
-  win.webContents.once('did-finish-load', () => {
-    win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"').then(r => {
-      clearTimeout(timer);
+  win.webContents.once('did-finish-load', async () => {
+    try {
+      const r = await win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"');
       console.log(`smoke-test: recovery screen loaded (${r}) — electron ${process.versions.electron}, ${process.arch}`);
-      app.exit(r === 'ok' ? 0 : 1);
-    }).catch(e => { console.error(`smoke-test: ${e.message}`); app.exit(1); });
+      if (r !== 'ok') { clearTimeout(timer); return app.exit(1); }
+      // The corner-hold gesture, end to end: a synthetic pointer-down in the
+      // corner must reach preload.js and, four seconds later, this process.
+      await win.webContents.executeJavaScript("window.dispatchEvent(new PointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerId: 1, isPrimary: true, bubbles: true }))");
+      const deadline = Date.now() + 6500;
+      while (!smokeGestureSeen && Date.now() < deadline) await new Promise(res => setTimeout(res, 100));
+      clearTimeout(timer);
+      console.log(`smoke-test: corner-hold gesture ${smokeGestureSeen ? 'received' : 'NOT received'}`);
+      app.exit(smokeGestureSeen ? 0 : 1);
+    } catch (e) { clearTimeout(timer); console.error(`smoke-test: ${e.message}`); app.exit(1); }
   });
   win.webContents.once('did-fail-load', (_e, code, desc) => { console.error(`smoke-test: failed to load (${code} ${desc})`); app.exit(1); });
   view = 'recovery'; recoveryReason = 'no-config';
