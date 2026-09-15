@@ -39,12 +39,18 @@ async function nmcli(args, { timeoutMs, terse = true } = {}) {
   return r.stdout;
 }
 
-let _available = null;
+// Is nmcli usable? Resolves true (remembered), or throws: err.permanent when
+// nmcli is not installed at all, otherwise a transient problem worth retrying
+// (a Pi 4 at cold boot, with Chromium starting and the SD card busy, can take
+// well over five seconds just to load nmcli's libraries).
+let _available = false;
 async function available() {
-  if (_available !== null) return _available;
-  const r = await exec('nmcli', ['--version'], 5000);
-  _available = r.code === 0;
-  return _available;
+  if (_available) return true;
+  const r = await exec('nmcli', ['--version'], 30 * 1000);
+  if (r.code === 0) { _available = true; return true; }
+  const err = new NmError((r.stderr || r.stdout || `nmcli exited ${r.code}`).trim(), r);
+  err.permanent = /ENOENT|not found/i.test(err.message);
+  throw err;
 }
 
 // ── Parsers (pure; unit-tested) ──────────────────────────────────────────────

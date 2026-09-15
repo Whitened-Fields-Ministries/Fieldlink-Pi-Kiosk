@@ -706,11 +706,21 @@ async function netTick() {
   if (netBusy) return scheduleNet(2000);
   netBusy = true;
   try {
-    if (netState.available === null) {
-      netState.available = await network.available();
-      if (!netState.available) log('net: nmcli not found — Wi-Fi setup disabled');
+    if (netState.available !== true) {
+      try {
+        await network.available();
+        netState.available = true; netState.error = null;
+        log('net: nmcli is available');
+      } catch (e) {
+        // Permanent (not installed): give up. Anything else: say so on screen
+        // and try again next tick — never lock Wi-Fi setup out for good.
+        netState.available = e.permanent ? false : null;
+        const msg = e.permanent ? 'NetworkManager (nmcli) is not installed on this system.' : `Waiting for nmcli (${e.message.split('\n')[0]})…`;
+        if (netState.error !== msg) log(`net: ${e.permanent ? 'nmcli not found — Wi-Fi setup disabled' : `nmcli not usable yet, retrying: ${e.message.split('\n')[0]}`}`);
+        netState.error = msg;
+        return;
+      }
     }
-    if (!netState.available) { netState.error = 'NetworkManager (nmcli) is not available on this system.'; return; }
     let st;
     try { st = await network.status(); netState.error = null; }
     catch (e) { netState.error = e.message; log(`net: status failed: ${e.message}`); return; }
@@ -1067,7 +1077,10 @@ function createWindow() {
     setTimeout(() => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.reload(); }, 10000);
   });
   win.webContents.on('console-message', (details) => {
-    if (details && typeof details === 'object' && (details.level === 'error' || details.level === 'warning')) log(`page console: ${details.message}`);
+    if (details && typeof details === 'object' && (details.level === 'error' || details.level === 'warning')) {
+      const where = details.sourceId ? ` (${String(details.sourceId).split('/').pop()}:${details.lineNumber || '?'})` : '';
+      log(`page console: ${details.message}${where}`);
+    }
   });
 
   win.on('closed', () => { win = null; });
@@ -1078,6 +1091,9 @@ function createWindow() {
 function runSmokeTest() {
   const timer = setTimeout(() => { console.error('smoke-test: timed out'); app.exit(1); }, 60000);
   createWindow();
+  // Any error thrown by the page's own script fails the smoke test.
+  const pageErrors = [];
+  win.webContents.on('console-message', (d) => { if (d && d.level === 'error') pageErrors.push(`${d.message} (${String(d.sourceId || '').split('/').pop()}:${d.lineNumber || '?'})`); });
   win.webContents.once('did-finish-load', async () => {
     try {
       const r = await win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"');
@@ -1090,6 +1106,8 @@ function runSmokeTest() {
       while (!smokeGestureSeen && Date.now() < deadline) await new Promise(res => setTimeout(res, 100));
       clearTimeout(timer);
       console.log(`smoke-test: corner-hold gesture ${smokeGestureSeen ? 'received' : 'NOT received'}`);
+      if (pageErrors.length) { console.error(`smoke-test: ${pageErrors.length} page error(s):\n  ${pageErrors.join('\n  ')}`); return app.exit(1); }
+      console.log('smoke-test: no page errors');
       app.exit(smokeGestureSeen ? 0 : 1);
     } catch (e) { clearTimeout(timer); console.error(`smoke-test: ${e.message}`); app.exit(1); }
   });
