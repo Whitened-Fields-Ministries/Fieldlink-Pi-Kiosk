@@ -676,11 +676,21 @@ async function netTick() {
   if (netBusy) return scheduleNet(2000);
   netBusy = true;
   try {
-    if (netState.available === null) {
-      netState.available = await network.available();
-      if (!netState.available) log('net: nmcli not found — Wi-Fi setup disabled');
+    if (netState.available !== true) {
+      try {
+        await network.available();
+        netState.available = true; netState.error = null;
+        log('net: nmcli is available');
+      } catch (e) {
+        // Permanent (not installed): give up. Anything else: say so on screen
+        // and try again next tick — never lock Wi-Fi setup out for good.
+        netState.available = e.permanent ? false : null;
+        const msg = e.permanent ? 'NetworkManager (nmcli) is not installed on this system.' : `Waiting for nmcli (${e.message.split('\n')[0]})…`;
+        if (netState.error !== msg) log(`net: ${e.permanent ? 'nmcli not found — Wi-Fi setup disabled' : `nmcli not usable yet, retrying: ${e.message.split('\n')[0]}`}`);
+        netState.error = msg;
+        return;
+      }
     }
-    if (!netState.available) { netState.error = 'NetworkManager (nmcli) is not available on this system.'; return; }
     let st;
     try { st = await network.status(); netState.error = null; }
     catch (e) { netState.error = e.message; log(`net: status failed: ${e.message}`); return; }

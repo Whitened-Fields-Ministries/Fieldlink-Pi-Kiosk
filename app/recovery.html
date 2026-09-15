@@ -428,11 +428,18 @@
       $('wifi-wait-text').textContent = n.error ? 'Wi‑Fi is not available: ' + n.error
         : (saved ? 'No network cable, and the saved Wi‑Fi network (' + n.saved.join(', ') + ') is not reachable right now. Trying again by itself; the phone setup network switches on after a few minutes.'
                  : 'No network cable and no Wi‑Fi set up yet. The phone setup network switches on in a moment.');
-      say('wifi-wait-msg', n.failedSsid ? 'Could not join ' + n.failedSsid + ': ' + (n.lastError || '') : '', n.failedSsid ? 'bad' : '');
+      say('wifi-wait-msg', n.failedSsid ? 'Could not join ' + n.failedSsid + ': ' + (n.lastError || '') : (n.lastError ? 'Setup network problem: ' + n.lastError + ' (retrying)' : ''), n.failedSsid || n.lastError ? 'bad' : '');
     }
     // Side card + details
     const pill = $('wifi-pill'), txt = $('wifi-side-text');
-    if (!n || !n.available) { pill.textContent = 'n/a'; pill.className = 'pill'; txt.textContent = n && n.error ? n.error : 'Not available on this device.'; $('m-wifi').textContent = '—'; ['wifi-change', 'wifi-phone'].forEach(id => $(id).disabled = true); return; }
+    if (!n || n.available !== true) {
+      const permanent = !!(n && n.available === false);
+      pill.textContent = permanent ? 'n/a' : 'starting…'; pill.className = permanent ? 'pill' : 'pill warn';
+      txt.textContent = n && n.error ? n.error : 'Checking the Wi‑Fi adapter…';
+      $('m-wifi').textContent = permanent ? 'not available' : 'starting';
+      ['wifi-change', 'wifi-phone'].forEach(id => $(id).disabled = true);
+      return;
+    }
     ['wifi-change', 'wifi-phone'].forEach(id => $(id).disabled = !n.wifi);
     if (!n.wifi) { pill.textContent = 'no adapter'; pill.className = 'pill warn'; txt.textContent = 'This device has no Wi‑Fi adapter; it uses the network cable.'; $('m-wifi').textContent = 'no adapter'; }
     else if (n.wifi.ssid && n.wifi.ip) { pill.textContent = 'connected'; pill.className = 'pill ok'; txt.textContent = 'Connected to ' + n.wifi.ssid + ' (' + n.wifi.ip + ').' + (n.eth && n.eth.ip ? ' The network cable is in use as well.' : ''); $('m-wifi').textContent = n.wifi.ssid + ' · ' + n.wifi.ip; }

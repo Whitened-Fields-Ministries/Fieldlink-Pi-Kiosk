@@ -1,6 +1,6 @@
 {
   "name": "fieldlink-pi-kiosk",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Field Link Missions kiosk display for Raspberry Pi (Linux shell)",
   "author": "Field Link Missions",
   "homepage": "https://fieldlinkmissions.com",
