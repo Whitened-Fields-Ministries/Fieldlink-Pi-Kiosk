@@ -379,6 +379,7 @@ async function runCheck() {
     if (result.status === 'ok') {
       invalidStreak = 0; offlineStreak = 0; lastGoodAt = Date.now();
       if (result.info && (result.info.name || result.info.key_prefix)) keyInfo = result.info;
+      followServerChannel(result.info && result.info.update_channel);
       const recovering = view === 'recovery' && ['invalid-key', 'offline', 'server', 'no-config'].includes(recoveryReason);
       if (recovering || (view === 'kiosk' && pageFailed)) {
         log(`health: ok — loading kiosk (was ${view}/${recoveryReason || (pageFailed ? 'page-failed' : '')})`);
@@ -572,6 +573,35 @@ function noteCompletedUpdate() {
       updateState = { phase: 'idle', available: true, installed: APP_VERSION, message: `Updated to ${APP_VERSION} (from ${m.from || '?'}).`, lines: [], updatedAt: Date.now() };
     }
   } catch {}
+}
+
+// The server names the update channel its displays should follow (/whoami
+// answers update_channel: "qa" on a QA server, "prod" on production), so a
+// display linked to QA gets early builds from apt-qa and one linked to prod
+// only promoted ones — the same image, no reflash. Switched at most once per
+// change; a server that does not send the field leaves the manual switch alone.
+let followedChannel = null;   // last channel the server asked for and we applied (or found in place)
+let followingChannel = false;
+async function followServerChannel(wanted) {
+  if (!['qa', 'prod'].includes(wanted) || wanted === followedChannel || followingChannel) return;
+  followingChannel = true;
+  try {
+    const cur = await runHelper(['channel'], { timeoutMs: 30 * 1000 });
+    if (helperUnavailable(cur)) return;
+    const current = (cur.stdout.match(/^channel=(.*)$/m) || [])[1] || 'none';
+    if (current === 'none') return;                       // this build has no update source to point anywhere
+    if (current === wanted) { followedChannel = wanted; return; }
+    log(`update: server asks for the ${wanted} channel (display is on ${current}) — switching`);
+    const r = await runHelper(['channel', wanted], { timeoutMs: 3 * 60 * 1000 });
+    if (r.code) { log(`update: channel switch failed — ${r.stderr.trim().split('\n').pop() || `helper exit ${r.code}`}`); return; }
+    followedChannel = wanted;
+    if (updateState) setUpdateState({ channel: wanted });
+    checkUpdate().catch(() => {});
+  } catch (e) {
+    log(`update: channel follow error ${e && e.message || e}`);
+  } finally {
+    followingChannel = false;
+  }
 }
 
 ipcMain.handle('kiosk:update-check', () => checkUpdate());
