@@ -1,0 +1,7 @@
+// FieldLink kiosk: the unprivileged display account may manage networking
+// (join Wi-Fi, run the setup hotspot) through NetworkManager. Nothing else.
+polkit.addRule(function (action, subject) {
+  if (subject.user == "kiosk" && action.id.indexOf("org.freedesktop.NetworkManager.") == 0) {
+    return polkit.Result.YES;
+  }
+});

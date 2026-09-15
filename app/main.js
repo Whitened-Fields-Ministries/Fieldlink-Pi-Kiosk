@@ -23,10 +23,15 @@
 //                                            started by hand
 //   ./config.json                            development only (npm start)
 //
-// Keyboard (a keyboard plugged into the Pi):
+// Keyboard (a keyboard plugged into the Pi) — or, with no keyboard, press and
+// hold the top-left corner of the screen for four seconds (touch or mouse) to
+// open and close the settings screen:
 //   Ctrl+Shift+K  open the settings / recovery screen
 //   Ctrl+Shift+R  reload the kiosk page
 //   Ctrl+Shift+Q  quit the app (systemd starts it again within seconds)
+//
+// Networking (network.js, setup-server.js): with no cable and no Wi-Fi the Pi
+// becomes a hotspot and serves a setup page to a phone; see "Network" below.
 //
 // Flags:
 //   --smoke-test  start, load the recovery screen once, exit 0 — used by CI to
@@ -36,6 +41,9 @@ const { app, BrowserWindow, ipcMain, net, powerSaveBlocker } = require('electron
 const path = require('path');
 const fs   = require('fs');
 const os   = require('os');
+const QRCode = require('qrcode');
+const network = require('./network');
+const { createSetupServer } = require('./setup-server');
 
 const APP_VERSION        = app.getVersion();
 // The FieldLink app lives on the app. host; the bare domain is the public website.
@@ -262,6 +270,7 @@ function stateForPage() {
     defaultServer: DEFAULT_SERVER,
     pair:          pair ? { code: pair.code, expiresAt: pair.expiresAt, origin: pair.origin, status: pair.status, error: pair.error } : null,
     platform:      process.platform,
+    net:           netForPage(),
   };
 }
 
@@ -439,6 +448,209 @@ function onConfigChanged() {
   }
 }
 
+// ── Network: Ethernet, Wi-Fi and the phone setup hotspot ─────────────────────
+// Ethernet plugged in → nothing to do. No network at all → after a grace
+// period the Pi becomes a Wi-Fi hotspot ("FieldLink-XXXX"), shows a QR code,
+// and serves the setup page (setup-server.js) to the phone that joins. The
+// phone picks the church's network; the hotspot goes down and the Pi joins
+// it. The radio cannot do both at once, so this is a hand-off, not a bridge.
+const NET_POLL_ONLINE_MS      = 30 * 1000;
+const NET_POLL_OFFLINE_MS     = 5 * 1000;
+const HOTSPOT_GRACE_MS        = 45 * 1000;      // no network, nothing saved → hotspot
+const HOTSPOT_GRACE_SAVED_MS  = 3 * 60 * 1000;  // a saved Wi-Fi exists → let NetworkManager try first
+const HOTSPOT_IDLE_RETRY_MS   = 10 * 60 * 1000; // hotspot up, no phone → retry the saved Wi-Fi
+const HOTSPOT_RETRY_WINDOW_MS = 45 * 1000;      // how long that retry gets
+
+let netState = {          // not Electron's net module (that is the fetch client)
+  available: null,     // nmcli usable?
+  error: null,         // last status() error
+  status: null,        // network.status() result
+  phase: 'idle',       // idle | hotspot | connecting
+  hotspot: null,       // { ssid, password, ip, qr }
+  qr: null,            // data: URL of the QR image
+  networks: [],        // last scan (cached before the hotspot went up)
+  scannedAt: null,
+  connectingSsid: null,
+  failedSsid: null,
+  lastError: null,
+  noNetSince: null,
+  hotspotUpAt: null,
+  lastPhoneHitAt: null,
+  retryUntil: null,
+};
+let netTimer = null;
+let netBusy = false;
+let setupServer = null;
+
+function netForPage() {
+  const st = netState.status;
+  return {
+    available: netState.available,
+    error: netState.error,
+    online: !!(st && st.online),
+    eth:  st ? st.eth  : null,
+    wifi: st ? st.wifi : null,
+    saved: st ? st.saved : [],
+    hotspot: { active: !!(st && st.hotspot.active), ssid: netState.hotspot && netState.hotspot.ssid, password: netState.hotspot && netState.hotspot.password, ip: network.HOTSPOT_ADDR, qr: netState.qr },
+    phase: netState.phase,
+    connectingSsid: netState.connectingSsid,
+    failedSsid: netState.failedSsid,
+    lastError: netState.lastError,
+    networks: netState.networks,
+    scannedAt: netState.scannedAt,
+    noNetSince: netState.noNetSince,
+  };
+}
+
+function scheduleNet(delayMs) {
+  if (netTimer) clearTimeout(netTimer);
+  netTimer = setTimeout(netTick, delayMs);
+}
+
+async function netTick() {
+  if (netBusy) return scheduleNet(2000);
+  netBusy = true;
+  try {
+    if (netState.available === null) {
+      netState.available = await network.available();
+      if (!netState.available) log('net: nmcli not found — Wi-Fi setup disabled');
+    }
+    if (!netState.available) { netState.error = 'NetworkManager (nmcli) is not available on this system.'; return; }
+    let st;
+    try { st = await network.status(); netState.error = null; }
+    catch (e) { netState.error = e.message; log(`net: status failed: ${e.message}`); return; }
+    const was = netState.status;
+    netState.status = st;
+    if (!was || was.online !== st.online) log(`net: ${st.online ? 'online' : 'offline'} (eth ${st.eth ? st.eth.state + (st.eth.ip ? ' ' + st.eth.ip : '') : 'none'}, wifi ${st.wifi ? st.wifi.state + (st.wifi.ssid ? ' ' + st.wifi.ssid : '') + (st.wifi.ip ? ' ' + st.wifi.ip : '') : 'none'}${st.hotspot.active ? ', hotspot up' : ''})`);
+
+    if (st.online) {
+      netState.noNetSince = null; netState.retryUntil = null;
+      if (netState.phase === 'hotspot' || st.hotspot.active) { log('net: online — taking the setup network down'); await stopHotspot(); }
+      if (netState.phase !== 'connecting') netState.phase = 'idle';
+      return;
+    }
+    if (netState.phase === 'connecting') return; // joinNetwork() is driving
+    if (netState.phase === 'hotspot' && st.hotspot.active) {
+      // A router reboot or a Wi-Fi outage should not leave the display in
+      // setup mode forever: with nobody on the phone page, drop the hotspot
+      // now and then so NetworkManager can retry the saved network.
+      const idleFor = Date.now() - Math.max(netState.hotspotUpAt || 0, netState.lastPhoneHitAt || 0);
+      if (st.saved.length && idleFor > HOTSPOT_IDLE_RETRY_MS) {
+        log('net: nobody on the setup page for a while — trying the saved Wi-Fi again');
+        await stopHotspot();
+        netState.retryUntil = Date.now() + HOTSPOT_RETRY_WINDOW_MS;
+      }
+      return;
+    }
+    if (netState.phase === 'hotspot' && !st.hotspot.active) { log('net: setup network went away'); netState.phase = 'idle'; }
+    if (!st.wifi) return;                                  // no radio: only the offline screen
+    if (netState.retryUntil && Date.now() < netState.retryUntil) return;
+    if (netState.retryUntil) { netState.retryUntil = null; await startHotspot('saved Wi-Fi still not reachable'); return; }
+    if (!netState.noNetSince) { netState.noNetSince = Date.now(); return; }
+    const grace = st.saved.length ? HOTSPOT_GRACE_SAVED_MS : HOTSPOT_GRACE_MS;
+    if (Date.now() - netState.noNetSince >= grace) await startHotspot(st.saved.length ? 'saved Wi-Fi did not come up' : 'no network');
+  } catch (e) {
+    log(`net: unexpected error ${e && e.stack || e}`);
+  } finally {
+    netBusy = false;
+    pushState();
+    scheduleNet(netState.status && netState.status.online ? NET_POLL_ONLINE_MS : NET_POLL_OFFLINE_MS);
+  }
+}
+
+async function startHotspot(reason) {
+  log(`net: starting the setup network (${reason})`);
+  try {
+    try { await network.radioOn(); } catch (e) { log(`net: radio on failed: ${e.message}`); }
+    // Scan before the hotspot takes the radio; the phone page shows this list.
+    try { netState.networks = await network.scan({ rescan: true }); netState.scannedAt = Date.now(); }
+    catch (e) { log(`net: scan failed: ${e.message}`); }
+    const hs = await network.hotspotUp();
+    netState.hotspot = hs;
+    try { netState.qr = await QRCode.toDataURL(hs.qr, { margin: 1, width: 480, errorCorrectionLevel: 'M', color: { dark: '#0a0f1aff', light: '#ffffffff' } }); }
+    catch (e) { netState.qr = null; log(`net: QR failed: ${e.message}`); }
+    netState.phase = 'hotspot'; netState.hotspotUpAt = Date.now(); netState.lastPhoneHitAt = null;
+    if (!setupServer) setupServer = createSetupServer({ backend: setupBackend(), log });
+    try { await setupServer.start(80, network.HOTSPOT_ADDR); }
+    catch (e) { log(`net: setup page cannot listen on port 80: ${e.message}`); netState.lastError = `The phone setup page could not start (${e.message}). Use a keyboard instead.`; }
+    log(`net: setup network "${hs.ssid}" is up, page at http://${network.HOTSPOT_ADDR}/`);
+  } catch (e) {
+    netState.phase = 'idle'; netState.lastError = e.message; netState.noNetSince = Date.now();
+    log(`net: hotspot failed: ${e.message}`);
+  }
+  pushState();
+}
+
+async function stopHotspot() {
+  if (setupServer) await setupServer.stop();
+  await network.hotspotDown();
+  if (netState.phase === 'hotspot') netState.phase = 'idle';
+  netState.hotspotUpAt = null;
+}
+
+// Join a network chosen on the phone page or with a keyboard.
+async function joinNetwork(ssid, password, source) {
+  if (!ssid) return { ok: false, error: 'Enter the network name.' };
+  if (netState.phase === 'connecting') return { ok: false, error: 'Already connecting — wait a moment.' };
+  const wasHotspot = netState.phase === 'hotspot';
+  netState.phase = 'connecting'; netState.connectingSsid = ssid; netState.failedSsid = null; netState.lastError = null;
+  pushState();
+  log(`net: joining "${ssid}" (from ${source})`);
+  if (wasHotspot) {
+    // Give the phone time to receive the confirmation before the network vanishes.
+    await new Promise(r => setTimeout(r, 2500));
+    await stopHotspot();
+  }
+  const r = await network.connect(ssid, password);
+  netState.connectingSsid = null;
+  if (r.ok) {
+    log(`net: joined "${ssid}" (${r.ip || 'address pending'})`);
+    netState.phase = 'idle'; netState.noNetSince = null; netState.retryUntil = null;
+    pushState();
+    if (checkTimer) clearTimeout(checkTimer);
+    scheduleCheck(3000);
+    scheduleNet(1500);
+    return r;
+  }
+  log(`net: could not join "${ssid}": ${r.detail || r.error}`);
+  netState.failedSsid = ssid; netState.lastError = r.error;
+  if (wasHotspot) await startHotspot('retry after a failed join'); // the phone rejoins and sees the error
+  else { netState.phase = 'idle'; netState.noNetSince = Date.now(); }
+  pushState();
+  return r;
+}
+
+// What the phone page (setup-server.js) can ask for.
+function setupBackend() {
+  return {
+    getNetworks: async () => ({ networks: netState.networks, scannedAt: netState.scannedAt }),
+    getStatus: async () => ({
+      phase: (netState.status && netState.status.online) ? 'connected' : (netState.phase === 'hotspot' && netState.failedSsid) ? 'failed' : netState.phase,
+      ssid: netState.connectingSsid || netState.failedSsid || null,
+      error: netState.lastError,
+      hotspot: { ssid: netState.hotspot && netState.hotspot.ssid },
+    }),
+    connect: (ssid, password) => joinNetwork(ssid, password, 'phone'),
+    touch: () => { netState.lastPhoneHitAt = Date.now(); },
+  };
+}
+
+ipcMain.handle('kiosk:wifi-scan', async () => {
+  try {
+    if (netState.phase === 'hotspot') return { networks: netState.networks, scannedAt: netState.scannedAt, cached: true };
+    netState.networks = await network.scan({ rescan: true }); netState.scannedAt = Date.now();
+    return { networks: netState.networks, scannedAt: netState.scannedAt };
+  } catch (e) { return { networks: netState.networks, scannedAt: netState.scannedAt, error: e.message }; }
+});
+ipcMain.handle('kiosk:wifi-connect', (_e, { ssid, password } = {}) => joinNetwork(String(ssid || '').trim(), String(password || ''), 'keyboard'));
+ipcMain.handle('kiosk:wifi-hotspot', async (_e, { on } = {}) => {
+  if (on) { if (netState.phase !== 'hotspot') await startHotspot('requested from the settings screen'); }
+  else { await stopHotspot(); netState.noNetSince = Date.now(); }
+  pushState();
+  return netForPage();
+});
+ipcMain.handle('kiosk:wifi-forget', async (_e, { ssid } = {}) => { const ok = await network.forget(ssid); scheduleNet(1000); return { ok }; });
+
 // ── IPC from recovery.html ───────────────────────────────────────────────────
 ipcMain.handle('kiosk:get-state', () => stateForPage());
 
@@ -568,17 +780,29 @@ async function pollPairRequest() {
 
 ipcMain.handle('kiosk:pair-request', async (_e, { server } = {}) => { await startPairRequest(server); return stateForPage(); });
 
-// ── Keyboard shortcuts ───────────────────────────────────────────────────────
+// ── Keyboard shortcuts and the corner-hold gesture ───────────────────────────
+// The gesture itself is detected in preload.js (it needs the page's pointer
+// events); it only ever asks for the same thing Ctrl+Shift+K does.
+let smokeGestureSeen = false;
+ipcMain.on('kiosk:gesture', (e, { name } = {}) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  if (name !== 'corner-hold') return;
+  if (SMOKE_TEST) { smokeGestureSeen = true; return; }
+  toggleSettingsScreen('corner hold');
+});
+
 // Electron's globalShortcut is X11-only; under cage (Wayland) the window itself
 // is the only thing with focus, so the shortcuts come through before-input-event.
+function toggleSettingsScreen(source) {
+  log(`settings screen toggled (${source})`);
+  if (view === 'recovery' && recoveryReason === 'manual') { if (kioskUrl) showKiosk(); }
+  else showRecovery('manual');
+}
+
 function handleShortcut(input) {
   if (input.type !== 'keyDown' || !input.control || !input.shift || input.alt || input.meta) return false;
   const key = String(input.key || '').toUpperCase();
-  if (key === 'K') {
-    if (view === 'recovery' && recoveryReason === 'manual') { if (kioskUrl) showKiosk(); }
-    else showRecovery('manual');
-    return true;
-  }
+  if (key === 'K') { toggleSettingsScreen('Ctrl+Shift+K'); return true; }
   if (key === 'R') {
     if (kioskUrl) { invalidStreak = 0; showKiosk(); scheduleCheck(5000); }
     else if (win && !win.isDestroyed()) win.webContents.reload();
@@ -659,12 +883,20 @@ function createWindow() {
 function runSmokeTest() {
   const timer = setTimeout(() => { console.error('smoke-test: timed out'); app.exit(1); }, 60000);
   createWindow();
-  win.webContents.once('did-finish-load', () => {
-    win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"').then(r => {
-      clearTimeout(timer);
+  win.webContents.once('did-finish-load', async () => {
+    try {
+      const r = await win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"');
       console.log(`smoke-test: recovery screen loaded (${r}) — electron ${process.versions.electron}, ${process.arch}`);
-      app.exit(r === 'ok' ? 0 : 1);
-    }).catch(e => { console.error(`smoke-test: ${e.message}`); app.exit(1); });
+      if (r !== 'ok') { clearTimeout(timer); return app.exit(1); }
+      // The corner-hold gesture, end to end: a synthetic pointer-down in the
+      // corner must reach preload.js and, four seconds later, this process.
+      await win.webContents.executeJavaScript("window.dispatchEvent(new PointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerId: 1, isPrimary: true, bubbles: true }))");
+      const deadline = Date.now() + 6500;
+      while (!smokeGestureSeen && Date.now() < deadline) await new Promise(res => setTimeout(res, 100));
+      clearTimeout(timer);
+      console.log(`smoke-test: corner-hold gesture ${smokeGestureSeen ? 'received' : 'NOT received'}`);
+      app.exit(smokeGestureSeen ? 0 : 1);
+    } catch (e) { clearTimeout(timer); console.error(`smoke-test: ${e.message}`); app.exit(1); }
   });
   win.webContents.once('did-fail-load', (_e, code, desc) => { console.error(`smoke-test: failed to load (${code} ${desc})`); app.exit(1); });
   view = 'recovery'; recoveryReason = 'no-config';
@@ -685,6 +917,7 @@ app.whenReady().then(() => {
 
   if (kioskUrl) showKiosk(); else showRecovery('no-config');
   scheduleCheck(kioskUrl ? 5000 : HEALTH_INTERVAL_MS);
+  scheduleNet(3000);
 });
 
 // Only one kiosk window at a time.
@@ -697,4 +930,4 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { if (checkTimer) clearTimeout(checkTimer); stopPairRequest(); });
+app.on('will-quit', () => { if (checkTimer) clearTimeout(checkTimer); if (netTimer) clearTimeout(netTimer); stopPairRequest(); if (setupServer) setupServer.stop(); });

@@ -13,9 +13,9 @@ This repo holds two things:
 | `image/` | A [pi-gen](https://github.com/RPi-Distro/pi-gen) stage that puts that package on Raspberry Pi OS Lite (trixie, arm64), starts it at boot under [cage](https://github.com/cage-kiosk/cage), and sets the boot config. | `fieldlink-kiosk-<version>-arm64.img.xz` + `os-list.json` for Raspberry Pi Imager |
 
 The plan and the reasoning behind it live in the FieldLink repo:
-`docs/kiosk-display-hardware.md` ("Plan for the Pi image"). This repo is milestone 1 of that
-plan: **boots on Ethernet and shows the pairing code.** Wi‑Fi setup (milestone 2) and signed
-apt updates, read-only root, diagnostics and factory reset (milestone 3) come next.
+`docs/kiosk-display-hardware.md` ("Plan for the Pi image"). Milestone 1 (**boots on Ethernet and
+shows the pairing code**) shipped as 0.1.0. Milestone 2 (**Wi‑Fi set up from a phone**) is 0.2.0.
+Signed apt updates, read-only root, diagnostics and factory reset (milestone 3) come next.
 
 ## How a Pi boots into the display
 
@@ -29,6 +29,39 @@ apt updates, read-only root, diagnostics and factory reset (milestone 3) come ne
    Everything the display remembers is in that one directory.
 5. If the app exits (crash, Ctrl+Shift+Q), systemd restarts it after 3 s.
 
+## Wi‑Fi from a phone (milestone 2)
+
+With no network cable and no Wi‑Fi the display cannot even ask for a pairing code, so the app
+takes over networking itself (`app/network.js` talks to NetworkManager through `nmcli`; a polkit
+rule in the package allows the `kiosk` user to):
+
+1. **No network for 45 s** (3 minutes when a Wi‑Fi network is already saved, to give
+   NetworkManager a chance): the app scans, caches the list, and turns the Pi's radio into a WPA2
+   hotspot named `FieldLink-XXXX` (last four digits of the Wi‑Fi MAC) with a random 10-character
+   password. The TV shows a QR code that joins it, plus the name and password in text.
+2. The app serves the **setup page** at `http://10.42.0.1/` (`app/setup-server.js`). A dnsmasq
+   entry in the package resolves every name to the Pi while the hotspot is up, so the phone's
+   captive-portal check hits that page and iOS/Android open it on their own.
+3. The page lists the networks from the scan; the person picks one and types the password.
+4. The hotspot goes down (the radio cannot do both), the Pi joins the network with an
+   autoconnect profile, and the TV shows the pairing code. The phone drops off the setup network
+   at that moment, by design. A wrong password brings the hotspot back with the same name and
+   password; the phone rejoins and the page shows the error.
+5. Ethernet plugged in at any point wins: the hotspot goes down as soon as the Pi is online.
+6. With nobody on the setup page for 10 minutes and a saved network on file, the hotspot pauses
+   for 45 s so a rebooted router can be rejoined without anyone touching the display.
+
+A keyboard gets the same picker on the TV (*Use a keyboard instead*), and the Ctrl+Shift+K screen
+has a Wi‑Fi block (current network, *Change network*, *Set up from a phone*).
+
+**Getting to the settings screen without a keyboard.** Press and hold the top-left corner of the
+screen for four seconds with one finger (touch screen) or the mouse. A small progress ring shows
+while holding; the settings screen opens, and the same gesture closes it. It is detected in
+`app/preload.js` on every page the window shows, including the kiosk page, and only ever does
+what Ctrl+Shift+K does. The Windows shell can carry the same snippet for touch displays. Raspberry Pi
+Imager's OS customisation can still write Wi‑Fi credentials at flash time; NetworkManager picks
+those up before the app ever starts a hotspot.
+
 The image is identical for every church. The first user is `fieldlink`; its password is random per
 build and thrown away (pi-gen needs one to skip the first-boot rename wizard, which would otherwise
 take over the TV), so SSH is only usable with a key: one baked in by a *Run workflow* build, or one
@@ -38,40 +71,48 @@ create a `pi` user and put the wizard's keyboard dialog on the TV instead of the
 
 ## Releases
 
-Two workflows on the free arm64 runners (`ubuntu-24.04-arm`, native, no QEMU):
+Nothing builds on pull requests or merges; PRs only run the fast checks (`node --check`, the unit
+tests, shellcheck, the unit file and the workflow YAML; about 15 s). Building is driven by tags,
+two per version, on the free arm64 runners:
 
-- **App package** (`app.yml`) — every change under `app/`: builds the arm64 and amd64 `.deb`,
-  installs the arm64 one on the runner, checks every shared library resolves (`ldd`) and starts
-  the packaged app under Xvfb (`--smoke-test`). Packages are workflow artifacts.
-- **Image** (`release.yml`) — *Run workflow* builds a dev image and keeps it as a workflow
-  artifact (optionally with your SSH public key baked in for the `fieldlink` user). Pushing a tag
-  `vX.Y.Z` (which must equal `app/package.json`'s version) builds the same image and publishes a
-  GitHub release with the `.img.xz`, its checksum, the `.deb` files and `os-list.json`.
+| Tag | What happens | Result |
+|---|---|---|
+| `vX.Y.Z-qa` | Builds the `.deb`, installs it on the runner, `ldd` + smoke test; builds the image with pi-gen (~10 min) | GitHub **pre-release** "FieldLink Kiosk X.Y.Z (QA)" with the `.img.xz`, checksum, `.deb` files and `os-list.json`. Flash this on the test Pi. |
+| `vX.Y.Z` | **No rebuild.** Finds the `vX.Y.Z-qa` release on the same commit, downloads and verifies its assets, points `os-list.json` at the prod URLs | GitHub release "FieldLink Kiosk X.Y.Z", marked *latest*: the download churches get. |
 
-An image build takes about 20–30 minutes. Cutting a release:
+`X.Y.Z` must equal `app/package.json`'s version, and the prod tag must point at the same commit as
+the QA tag (otherwise the workflow refuses, because the promoted image would not match the source).
+A QA build that needs redoing gets `vX.Y.Z-qa.2`, `-qa.3`…; promotion picks the newest one on the
+commit.
 
 ```bash
-# bump app/package.json version, commit, merge to main, then:
+# after the version bump has merged:
 git fetch origin main
-git tag -a vX.Y.Z origin/main -m "FieldLink Kiosk X.Y.Z"
-git push origin vX.Y.Z
+git tag -a v0.2.0-qa origin/main -m "FieldLink Kiosk 0.2.0 QA"
+git push origin v0.2.0-qa
+# … flash-and-check on the Pi from the v0.2.0-qa pre-release, then:
+git tag -a v0.2.0 origin/main -m "FieldLink Kiosk 0.2.0"
+git push origin v0.2.0
 ```
 
 ### Raspberry Pi Imager
 
-Every release ships `os-list.json`. The stable address of the newest one is
+Every release ships `os-list.json`. The stable address of the newest **production** one is
 
 ```
 https://github.com/Whitened-Fields-Ministries/Fieldlink-Pi-Kiosk/releases/latest/download/os-list.json
 ```
 
 which can be used as an Imager repository (`rpi-imager --repo <that url>`) or nested into a
-larger list with `subitems_url`. Until then, *Use custom* with the downloaded `.img.xz` works.
+larger list with `subitems_url`; QA pre-releases never become *latest*, so this only ever points at
+a promoted build. A QA list lives at `…/releases/download/vX.Y.Z-qa/os-list.json`. *Use custom*
+with the downloaded `.img.xz` always works too.
 
 ## Flash-and-check (Pi 4, Ethernet, milestone 1)
 
-1. The **Image** workflow runs on the PR (or Actions → *Run workflow* on `main`, where an SSH public key can be given).
-   Download the `fieldlink-kiosk-image` artifact and unzip it to get the `.img.xz`.
+1. Merge the PR and push the `vX.Y.Z-qa` tag (see *Releases*). Download the `.img.xz` from the
+   QA pre-release. For ssh during testing, add a user with your public key through Imager's OS
+   customisation (classic `firstrun.sh` path, no cloud-init in this image).
 2. Raspberry Pi Imager → *Choose OS* → *Use custom* → the `.img.xz`. Skip OS customisation for
    this first test; it can add an SSH key later (classic `firstrun.sh` path, no cloud-init in
    this image). Write the card.
@@ -87,13 +128,38 @@ larger list with `subitems_url`. Until then, *Use custom* with the downloaded `.
    `/var/lib/fieldlink-kiosk/config.json`).
 8. Plug in a keyboard: Ctrl+Shift+K shows the settings screen, *Details* lists the Pi's
    IP address; Ctrl+Shift+Q restarts the app within a few seconds.
+
+**Wi‑Fi (milestone 2), same card, cable out:**
+
+10. Power off, unplug the Ethernet cable, power on. **Expect within ~75 s:** "Set up Wi‑Fi from
+    your phone" with a QR code, a network name `FieldLink-XXXX` and a 10-character password.
+    (If the display was already linked, it shows the *Connecting…* screen first; the Wi‑Fi block
+    replaces the pairing code area.)
+11. Scan the QR with the phone camera and join. **Expect within ~10 s:** a "sign in to network"
+    prompt or notification that opens the setup page (dark page, "Connect the display to Wi‑Fi",
+    a list of networks). If nothing pops up, open `http://10.42.0.1/` in the phone's browser.
+12. Pick the church Wi‑Fi, type its password, *Connect the display*. The phone page says the setup
+    network is switching off; **the TV shows "Joining …" then the pairing code (or the map) within
+    ~30 s.**
+13. Wrong-password check: repeat with a bad password. **Expect:** the TV goes back to the QR
+    screen with "Could not join …: The password was not accepted." and the phone, once it has
+    rejoined `FieldLink-XXXX`, shows the same error with a *Try again* button.
+14. Power-cycle with the cable still out: the Pi rejoins the Wi‑Fi by itself; no QR code.
+15. Plug the cable back in while on Wi‑Fi: nothing visible should change; *Details* shows both.
+16. Keyboard path: Ctrl+Shift+K → *Change network* lists networks with signal and band; joining
+    from there works the same.
+17. Over ssh, `journalctl -u fieldlink-kiosk -b | grep 'net:'` shows every decision the app made.
+18. Touch (or a mouse, if no touch screen is at hand): press and hold the top-left corner for four
+    seconds. **Expect:** a gold ring fills up in the corner, then the settings screen opens; the
+    same hold closes it. A short tap or a drag must do nothing.
 9. Optional, over ssh (`ssh fieldlink@<ip>` with the key from step 1):
    `journalctl -u fieldlink-kiosk -b` for the app log, `cat /etc/fieldlink-kiosk-image` for the
    build, `sudo cat /var/lib/fieldlink-kiosk/kiosk.log` for the app's own log.
 
 Things worth writing down for the PR: how long from power to code, whether the TV negotiated
 4K (`kmsprint` over ssh, or the TV's info button), whether the map is smooth in
-presentation mode, and anything printed to the TV before cage takes over.
+presentation mode, anything printed to the TV before cage takes over, and for Wi‑Fi which phone
+(iOS/Android version) opened the setup page by itself.
 
 ## Development
 
@@ -101,7 +167,8 @@ presentation mode, and anything printed to the TV before cage takes over.
 cd app
 npm install
 npm start                 # uses ./config.json if present; otherwise shows the link screen
-npm run check             # node --check on main.js, preload.js and the inline script in recovery.html
+npm run check             # node --check on the app files and the inline script in recovery.html
+npm test                  # unit tests: nmcli parsers, the phone setup server (no Pi needed)
 npm run smoke             # start, render the recovery screen once, exit 0
 npm run build:deb         # arm64 package in app/dist/
 npm run build:deb:amd64   # amd64 package for the Debian VM test loop
@@ -114,7 +181,9 @@ directory (`FIELDLINK_KIOSK_STATE_DIR`, set by the unit), keyboard shortcuts thr
 no battery clock, so TLS fails until NTP has run; the app polls every 5 s until
 `/run/systemd/timesync/synchronized` exists) and the `--smoke-test` flag.
 
-`recovery.html` renders standalone in a browser with sample data.
+`recovery.html` renders standalone in a browser with sample data. The phone setup page can be
+looked at on a desktop too: `node -e "require('./setup-server').createSetupServer({backend:{getNetworks:async()=>({networks:[{ssid:'Demo',signal:70,secured:true,band:'2.4'}]}),getStatus:async()=>({phase:'hotspot',hotspot:{ssid:'FieldLink-DEMO'}}),connect:async()=>{}}}).start(8080,'127.0.0.1')"`
+then open http://127.0.0.1:8080/.
 
 ### Test loops without a Pi
 
@@ -130,14 +199,17 @@ no battery clock, so TLS fails until NTP has run; the app polls every 5 s until
 `app/scripts/build-deb.sh` runs `@electron/packager` for the target architecture and assembles
 the package with `dpkg-deb` from `app/debian/`: `control.in` (dependencies use trixie's `t64`
 names with bookworm alternatives), `postinst` (creates the `kiosk` user, sets the setuid sandbox
-helper), `fieldlink-kiosk.service`, `pam.d-fieldlink-kiosk`, `fieldlink-kiosk-session`.
+helper), `fieldlink-kiosk.service`, `pam.d-fieldlink-kiosk`, `fieldlink-kiosk-session`, the
+polkit rule that lets `kiosk` drive NetworkManager, the `dnsmasq-shared.d` entry for the captive
+portal, and a `sysctl.d` file that lets an unprivileged process bind port 80.
 No electron-builder, no fpm: every file that ends up on the Pi is readable in this repo.
 
 ### Image
 
 `image/stage-fieldlink/` is a pi-gen stage appended after `stage2` (Lite): installs the
 `.deb` from `00-kiosk/files/`, enables the unit, sets `graphical.target`, adds
-`hdmi_enable_4kp60=1` under `[pi4]` in `config.txt` and quietens the kernel console. The workflow
+`hdmi_enable_4kp60=1` under `[pi4]` in `config.txt` and quietens the kernel console. The Wi‑Fi
+regulatory domain is set to US (`wpa-country`), which is what unblocks the radio. The workflow
 runs it through [usimd/pi-gen-action](https://github.com/usimd/pi-gen-action) with the pi-gen
 `arm64` branch.
 

@@ -22,10 +22,10 @@ runs:
       run: npm ci --no-audit --no-fund
       env:
         ELECTRON_GET_TIMEOUT: '120000'
-    - name: Syntax checks
+    - name: Syntax checks and unit tests
       shell: bash
       working-directory: app
-      run: npm run check
+      run: npm run check && npm test
     - name: Build .deb (${{ inputs.arch }})
       id: build
       shell: bash

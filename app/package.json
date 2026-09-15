@@ -1,6 +1,6 @@
 {
   "name": "fieldlink-pi-kiosk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Field Link Missions kiosk display for Raspberry Pi (Linux shell)",
   "author": "Field Link Missions",
   "homepage": "https://fieldlinkmissions.com",
@@ -13,7 +13,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check main.js && node --check preload.js && node scripts/check-recovery-html.js",
+    "check": "node --check main.js && node --check preload.js && node --check network.js && node --check setup-server.js && node scripts/check-recovery-html.js",
+    "test": "node --test test/*.test.js",
     "smoke": "electron . --smoke-test",
     "build:deb": "scripts/build-deb.sh arm64",
     "build:deb:amd64": "scripts/build-deb.sh amd64"
@@ -21,5 +22,8 @@
   "devDependencies": {
     "@electron/packager": "20.3.0",
     "electron": "44.3.0"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   }
 }
