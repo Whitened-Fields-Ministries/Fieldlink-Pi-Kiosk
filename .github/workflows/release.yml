@@ -223,6 +223,7 @@ jobs:
           path: out
 
       - name: Publish QA pre-release
+        id: published
         uses: softprops/action-gh-release@v2
         with:
           name: FieldLink Kiosk ${{ env.VERSION }} (QA)
@@ -243,6 +244,19 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The FieldLink QA server caches which image build it hands out for an
+      # hour; this makes the new one show up on Admin → Kiosk at once. Both
+      # secrets are optional (the Windows kiosk repo uses the same pair).
+      - name: Tell the FieldLink QA server about the new build
+        if: always() && steps.published.outcome == 'success'
+        env:
+          SERVER_URL: ${{ secrets.FIELDLINK_QA_SERVER_URL }}
+          WEBHOOK_SECRET: ${{ secrets.KIOSK_QA_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$SERVER_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then echo "FIELDLINK_QA_SERVER_URL / KIOSK_QA_WEBHOOK_SECRET not set; skipping cache invalidation"; exit 0; fi
+          curl -fsS -X POST "${SERVER_URL%/}/api/kiosk/installer/invalidate" -H "x-webhook-secret: $WEBHOOK_SECRET" -H 'Content-Type: application/json' \
+            && echo "FieldLink QA server cache invalidated" || echo "::warning::cache invalidation skipped ($SERVER_URL did not accept it; the server refreshes within an hour anyway)"
 
       - name: Publish the .deb to the apt-qa channel
         if: hashFiles('app/debian/fieldlink-apt.public.asc') != ''
@@ -300,6 +314,7 @@ jobs:
           PY
 
       - name: Publish production release
+        id: published
         uses: softprops/action-gh-release@v2
         with:
           name: FieldLink Kiosk ${{ env.VERSION }}
@@ -318,6 +333,19 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The FieldLink production server caches which image build it hands out for an
+      # hour; this makes the new one show up on Admin → Kiosk at once. Both
+      # secrets are optional (the Windows kiosk repo uses the same pair).
+      - name: Tell the FieldLink production server about the new build
+        if: always() && steps.published.outcome == 'success'
+        env:
+          SERVER_URL: ${{ secrets.FIELDLINK_SERVER_URL }}
+          WEBHOOK_SECRET: ${{ secrets.KIOSK_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$SERVER_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then echo "FIELDLINK_SERVER_URL / KIOSK_WEBHOOK_SECRET not set; skipping cache invalidation"; exit 0; fi
+          curl -fsS -X POST "${SERVER_URL%/}/api/kiosk/installer/invalidate" -H "x-webhook-secret: $WEBHOOK_SECRET" -H 'Content-Type: application/json' \
+            && echo "FieldLink production server cache invalidated" || echo "::warning::cache invalidation skipped ($SERVER_URL did not accept it; the server refreshes within an hour anyway)"
 
       - name: Publish the .deb to the apt-prod channel
         if: hashFiles('app/debian/fieldlink-apt.public.asc') != ''

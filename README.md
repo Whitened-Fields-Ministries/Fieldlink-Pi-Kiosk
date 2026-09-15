@@ -1,9 +1,10 @@
 # FieldLink Pi Kiosk
 
 The Raspberry Pi image for a [Field Link Missions](https://fieldlinkmissions.com) lobby display.
-A church flashes the image onto a microSD card, plugs a Pi 4 or Pi 5 into the TV and never
-touches the OS: the screen shows a 6-character code, a Super Admin types it into FieldLink
-Admin → Kiosk → 🔗 Link kiosk, and the map appears.
+A church downloads the image from FieldLink Admin → Kiosk → **🍓 Raspberry Pi Kiosk** (which
+also carries the buying list and the setup steps), flashes it onto a microSD card, plugs a Pi 4
+or Pi 5 into the TV and never touches the OS: the screen shows a 6-character code, a Super Admin
+types it into Admin → Kiosk → 🔗 Link kiosk, and the map appears.
 
 This repo holds two things:
 
@@ -88,6 +89,13 @@ A deployed kiosk gets new builds through apt, never through a new card:
 - Root is reached only through `/usr/lib/fieldlink-kiosk/root-helper`, a fixed menu allowed for the
   `kiosk` user by one sudoers line: `check-update`, `update`, `reboot`, `factory-reset`, `logs`,
   `channel`.
+- **The server decides the channel.** FieldLink's `/api/kiosk/whoami` (the 30 s key check) answers
+  `update_channel: "qa"` on a QA server and `"prod"` on production; when that differs from the apt
+  source on the card the app runs `root-helper channel <x>` once and logs it. So a display linked
+  to `app.qa.fieldlinkmissions.com` gets early builds from `apt-qa`, one linked to production
+  only promoted builds, from the very same image and without a reflash. Re-linking a display to
+  the other server moves it over at its next check. A server that does not send the field (an
+  older FieldLink) leaves the manual Ctrl+Shift+S switch alone.
 - Publishing: the `vX.Y.Z-qa` tag pushes the `.deb` to the `apt-qa` channel, the `vX.Y.Z`
   promotion to `apt-prod` (`scripts/apt-repo.sh` builds and signs, `scripts/publish-apt.sh`
   replaces the release assets). Both need the signing key: the public half committed as
@@ -118,6 +126,16 @@ two per version, on the free arm64 runners:
 the QA tag (otherwise the workflow refuses, because the promoted image would not match the source).
 A QA build that needs redoing gets `vX.Y.Z-qa.2`, `-qa.3`…; promotion picks the newest one on the
 commit.
+
+FieldLink's Admin → Kiosk → 🍓 Raspberry Pi Kiosk panel hands out whichever release matches the
+server: the **QA server** shows the newest `vX.Y.Z-qa` pre-release, **production** the *latest*
+release (`server/src/routes/kiosk.js` in the FieldLink repo, `/api/kiosk/pi-image/version`). Each
+server caches that lookup for an hour; both publish jobs call its
+`POST /api/kiosk/installer/invalidate` so the new build shows up at once, when the repository
+secrets are set: `FIELDLINK_QA_SERVER_URL` + `KIOSK_QA_WEBHOOK_SECRET` (QA tag) and
+`FIELDLINK_SERVER_URL` + `KIOSK_WEBHOOK_SECRET` (prod tag), the URL being the app host
+(`https://app.qa.fieldlinkmissions.com`) and the secret that server's `KIOSK_WEBHOOK_SECRET`.
+Without them the step is skipped and the panel catches up within the hour.
 
 ```bash
 # after the version bump has merged:
