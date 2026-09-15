@@ -1047,7 +1047,10 @@ function createWindow() {
     setTimeout(() => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.reload(); }, 10000);
   });
   win.webContents.on('console-message', (details) => {
-    if (details && typeof details === 'object' && (details.level === 'error' || details.level === 'warning')) log(`page console: ${details.message}`);
+    if (details && typeof details === 'object' && (details.level === 'error' || details.level === 'warning')) {
+      const where = details.sourceId ? ` (${String(details.sourceId).split('/').pop()}:${details.lineNumber || '?'})` : '';
+      log(`page console: ${details.message}${where}`);
+    }
   });
 
   win.on('closed', () => { win = null; });
@@ -1058,6 +1061,9 @@ function createWindow() {
 function runSmokeTest() {
   const timer = setTimeout(() => { console.error('smoke-test: timed out'); app.exit(1); }, 60000);
   createWindow();
+  // Any error thrown by the page's own script fails the smoke test.
+  const pageErrors = [];
+  win.webContents.on('console-message', (d) => { if (d && d.level === 'error') pageErrors.push(`${d.message} (${String(d.sourceId || '').split('/').pop()}:${d.lineNumber || '?'})`); });
   win.webContents.once('did-finish-load', async () => {
     try {
       const r = await win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"');
@@ -1070,6 +1076,8 @@ function runSmokeTest() {
       while (!smokeGestureSeen && Date.now() < deadline) await new Promise(res => setTimeout(res, 100));
       clearTimeout(timer);
       console.log(`smoke-test: corner-hold gesture ${smokeGestureSeen ? 'received' : 'NOT received'}`);
+      if (pageErrors.length) { console.error(`smoke-test: ${pageErrors.length} page error(s):\n  ${pageErrors.join('\n  ')}`); return app.exit(1); }
+      console.log('smoke-test: no page errors');
       app.exit(smokeGestureSeen ? 0 : 1);
     } catch (e) { clearTimeout(timer); console.error(`smoke-test: ${e.message}`); app.exit(1); }
   });

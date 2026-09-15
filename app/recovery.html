@@ -239,7 +239,7 @@
 
     <div class="block" id="update-block">
       <h2>Updates <span id="update-pill" class="pill">—</span></h2>
-      <p id="update-text" class="small">Installed: <span id="m-version">—</span>.</p>
+      <p id="update-text" class="small">Installed: —</p>
       <div class="row" style="margin-top:6px">
         <button id="check-btn">Check now</button>
         <button id="install-btn" class="primary hidden">Install update</button>
@@ -272,12 +272,14 @@
   const $ = id => document.getElementById(id);
   const bridge = window.kiosk;
   let state = null;
+  let lastState = null;
   let serverRevealed = false;
   let tick = null;
 
   function fmtTime(ts) { return ts ? new Date(ts).toLocaleTimeString() : '—'; }
   function mmss(secs) { return Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0'); }
-  function say(id, text, cls) { const el = $(id); el.textContent = text || ''; el.className = 'msg' + (cls ? ' ' + cls : ''); }
+  function say(id, text, cls) { const el = $(id); if (!el) return; el.textContent = text || ''; el.className = 'msg' + (cls ? ' ' + cls : ''); }
+  function setText(id, text) { const el = $(id); if (el) el.textContent = text; }
 
   function setReason(reason) {
     document.querySelectorAll('.reason').forEach(el => el.classList.toggle('hidden', el.id !== 'r-' + reason));
@@ -320,21 +322,21 @@
       ? 'This display has no network address yet. Check that the network cable is plugged into the Pi and into a working port on the router or switch.'
       : 'If this stays up for more than a few minutes: check the network cable or Wi‑Fi, the router, and whether other devices in the building have internet.';
 
-    $('m-name').textContent   = s.keyName || (s.hasConfig ? '(unknown — server not reached yet)' : 'not linked');
-    $('m-server').textContent = s.server || (s.pair && s.pair.origin) || s.defaultServer || '—';
-    $('m-key').textContent    = s.keyPrefix || '—';
-    $('m-check').textContent  = lc ? fmtTime(lc.at) + (s.lastGoodAt ? ' · last OK ' + fmtTime(s.lastGoodAt) : '') : '—';
-    $('m-net').textContent    = noNet ? 'no address (cable unplugged or DHCP pending)' : s.addresses.join(' · ');
-    $('m-clock').textContent  = new Date().toLocaleString() + (s.clockSynced === false ? ' · not yet synchronised' : ' · synchronised');
-    $('m-config').textContent = s.configSource || ('none yet — will be created at ' + (s.configTargets && s.configTargets[0]));
-    $('m-log').textContent    = s.logPath || '—';
-    $('m-host').textContent   = (s.hostname || '—') + ' · ' + (s.platform || '');
-    $('m-app').textContent    = 'FieldLinkPiKiosk ' + (s.appVersion || '?') + ' · Electron ' + (s.electron || '?');
-    $('m-version').textContent = 'FieldLinkPiKiosk ' + (s.appVersion || '?');
+    setText('m-name', s.keyName || (s.hasConfig ? '(unknown — server not reached yet)' : 'not linked'));
+    setText('m-server', s.server || (s.pair && s.pair.origin) || s.defaultServer || '—');
+    setText('m-key', s.keyPrefix || '—');
+    setText('m-check', lc ? fmtTime(lc.at) + (s.lastGoodAt ? ' · last OK ' + fmtTime(s.lastGoodAt) : '') : '—');
+    setText('m-net', noNet ? 'no address (cable unplugged or DHCP pending)' : s.addresses.join(' · '));
+    setText('m-clock', new Date().toLocaleString() + (s.clockSynced === false ? ' · not yet synchronised' : ' · synchronised'));
+    setText('m-config', s.configSource || ('none yet — will be created at ' + (s.configTargets && s.configTargets[0])));
+    setText('m-log', s.logPath || '—');
+    setText('m-host', (s.hostname || '—') + ' · ' + (s.platform || ''));
+    setText('m-app', 'FieldLinkPiKiosk ' + (s.appVersion || '?') + ' · Electron ' + (s.electron || '?'));
     if (!$('server').value) $('server').value = s.server || (s.pair && s.pair.origin) || s.defaultServer || '';
     renderPair(s.pair);
     renderNet(s.net);
     renderUpdate(s.updateState);
+    lastState = s;
 
     if (tick) clearInterval(tick);
     tick = setInterval(() => {
@@ -350,7 +352,6 @@
   // ── Updates / maintenance ────────────────────────────────────────────────
   function renderUpdate(u) {
     const pill = $('update-pill'), txt = $('update-text'), install = $('install-btn'), logBox = $('update-log');
-    $('m-version').textContent = 'FieldLinkPiKiosk ' + ((u && u.installed) || (state && state.appVersion) || '?');
     if (!u) { pill.textContent = '—'; pill.className = 'pill'; txt.textContent = 'Installed: FieldLinkPiKiosk ' + ((state && state.appVersion) || '?') + '. Not checked yet.'; install.classList.add('hidden'); logBox.classList.add('hidden'); return; }
     $('m-channel').textContent = u.channel || '—';
     if (u.phase === 'checking') { pill.textContent = 'checking…'; pill.className = 'pill'; }
@@ -557,7 +558,12 @@
     bridge.updateState().then(u => { if (!u) bridge.updateCheck(); });
   } else {
     // Opened outside the app (e.g. in a browser while developing) or by the CI smoke test.
-    render({ reason: new URLSearchParams(location.search).get('reason') || 'no-config', hasConfig: false, defaultServer: 'https://app.fieldlinkmissions.com', configTargets: ['(not running inside the kiosk app)'], addresses: ['eth0 192.0.2.10'], clockSynced: true, hostname: 'fieldlink-kiosk', platform: 'linux', appVersion: '0.0.0', electron: '?', pair: { status: 'waiting', code: 'K7M-3PX', expiresAt: Date.now() + 14 * 60 * 1000, origin: 'https://app.fieldlinkmissions.com' }, net: { available: true, online: true, eth: { ip: '192.0.2.10', state: 'connected' }, wifi: { state: 'disconnected' }, saved: [], hotspot: {}, phase: 'idle', networks: [] }, updateState: { phase: 'idle', available: true, installed: '0.0.0', candidate: '0.0.0', newer: false, channel: 'prod', message: 'Up to date (0.0.0).', lines: [] } });
+    // Render twice on purpose: the live app re-renders on every state push,
+    // and a render that only works once (an element the first pass replaced)
+    // is exactly the bug the smoke test must catch.
+    const sample = { reason: new URLSearchParams(location.search).get('reason') || 'no-config', hasConfig: false, defaultServer: 'https://app.fieldlinkmissions.com', configTargets: ['(not running inside the kiosk app)'], addresses: ['eth0 192.0.2.10'], clockSynced: true, hostname: 'fieldlink-kiosk', platform: 'linux', appVersion: '0.0.0', electron: '?', pair: { status: 'waiting', code: 'K7M-3PX', expiresAt: Date.now() + 14 * 60 * 1000, origin: 'https://app.fieldlinkmissions.com' }, net: { available: true, online: true, eth: { ip: '192.0.2.10', state: 'connected' }, wifi: { state: 'disconnected' }, saved: [], hotspot: {}, phase: 'idle', networks: [] }, updateState: { phase: 'idle', available: true, installed: '0.0.0', candidate: '0.0.0', newer: false, channel: 'prod', message: 'Up to date (0.0.0).', lines: [] } };
+    render(sample); render(sample);
+    render({ ...sample, net: { available: true, online: false, eth: { state: 'unavailable', carrier: false }, wifi: { state: 'disconnected' }, saved: [], hotspot: { active: true, ssid: 'FieldLink-4F2A', password: 'abc', ip: '10.42.0.1', qr: '' }, phase: 'hotspot', networks: [] }, updateState: null });
   }
 })();
 </script>
