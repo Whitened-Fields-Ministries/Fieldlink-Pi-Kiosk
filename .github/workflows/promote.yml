@@ -6,8 +6,10 @@ name: Promote to prod
 # latest) and publishes the .deb to the apt-prod channel. No rebuild.
 #
 # Same script as the tag-push path in release.yml (scripts/promote-release.sh),
-# so the two can never drift. A tag pushed by this workflow's token does not
-# trigger release.yml, which is why the promotion happens here directly.
+# so the two can never drift. The tag is created through the GitHub API (a
+# git push from the workflow token is refused because the tree contains
+# workflow files), and a tag created by this token does not trigger
+# release.yml, which is why the promotion happens here directly.
 
 on:
   workflow_dispatch:

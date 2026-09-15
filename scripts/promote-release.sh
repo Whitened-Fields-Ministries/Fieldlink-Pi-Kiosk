@@ -14,7 +14,7 @@
 # release vX.Y.Z as *latest*, and publishes the .deb to the apt-prod channel
 # when the signing key is set up (scripts/publish-apt.sh).
 #
-# Needs: gh (GH_TOKEN), git with tags, GITHUB_REPOSITORY.
+# Needs: gh (GH_TOKEN with contents: write), git with tags, GITHUB_REPOSITORY.
 set -euo pipefail
 
 VERSION="${1:?version X.Y.Z}"; shift || true
@@ -38,11 +38,14 @@ if git rev-parse -q --verify "refs/tags/${prod_tag}^{commit}" >/dev/null 2>&1; t
   [ "$have" = "$qa_sha" ] || die "$prod_tag already exists on ${have:0:9}, but $qa_tag is at ${qa_sha:0:9}. Refusing to publish a release whose tag does not match its build."
   echo "Tag $prod_tag already on the QA commit."
 elif [ "$CREATE" = 1 ]; then
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git tag -a "$prod_tag" "$qa_sha" -m "FieldLink Kiosk ${VERSION}"
-  git push origin "$prod_tag"
-  echo "Created and pushed $prod_tag at ${qa_sha:0:9}."
+  # Create the annotated tag through the REST API, not `git push`: GitHub
+  # refuses a git push from the workflow token when the tagged tree contains
+  # .github/workflows (it would need the `workflows` permission), but the Git
+  # Data API only needs contents: write.
+  tag_obj="$(python3 -c 'import json,sys; print(json.dumps({"tag": sys.argv[1], "message": "FieldLink Kiosk " + sys.argv[2], "object": sys.argv[3], "type": "commit", "tagger": {"name": "github-actions[bot]", "email": "41898282+github-actions[bot]@users.noreply.github.com"}}))' "$prod_tag" "$VERSION" "$qa_sha" \
+    | gh api "repos/${GITHUB_REPOSITORY}/git/tags" --input - --jq .sha)"
+  gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${prod_tag}" -f sha="$tag_obj" >/dev/null
+  echo "Created $prod_tag at ${qa_sha:0:9} (tag object ${tag_obj:0:9})."
 else
   die "tag $prod_tag does not exist. Push it on ${qa_sha:0:9}, or use the Promote to prod workflow."
 fi
