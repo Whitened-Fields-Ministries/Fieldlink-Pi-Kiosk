@@ -112,6 +112,9 @@ jobs:
           keyboard-keymap: us
           keyboard-layout: English (US)
           timezone: America/New_York
+          # Sets the regulatory domain and unblocks the radio; without it
+          # NetworkManager starts with Wi-Fi disabled and no hotspot is possible.
+          wpa-country: US
           username: fieldlink
           password: ${{ steps.pw.outputs.pw }}
           disable-first-boot-user-rename: 1

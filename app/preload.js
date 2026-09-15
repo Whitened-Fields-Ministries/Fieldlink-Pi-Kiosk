@@ -22,6 +22,11 @@ if (window.location.protocol === 'file:') {
     quit:     ()             => ipcRenderer.invoke('kiosk:quit'),
     // Kiosk-displayed pairing code (admin types it into FieldLink Admin)
     pairRequest: (server)    => ipcRenderer.invoke('kiosk:pair-request', { server }),
+    // Wi-Fi (NetworkManager through main.js)
+    wifiScan:    ()               => ipcRenderer.invoke('kiosk:wifi-scan'),
+    wifiConnect: (ssid, password) => ipcRenderer.invoke('kiosk:wifi-connect', { ssid, password }),
+    wifiHotspot: (on)             => ipcRenderer.invoke('kiosk:wifi-hotspot', { on }),
+    wifiForget:  (ssid)           => ipcRenderer.invoke('kiosk:wifi-forget', { ssid }),
     onState:  (cb) => {
       const handler = (_e, state) => cb(state);
       ipcRenderer.on('kiosk:state', handler);

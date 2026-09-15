@@ -15,7 +15,7 @@ case "$1" in
       adduser --system --ingroup kiosk --home "$STATE_DIR" --no-create-home \
         --shell /usr/sbin/nologin --gecos "FieldLink kiosk display" kiosk
     fi
-    for grp in video render input audio; do
+    for grp in video render input audio netdev; do
       if getent group "$grp" >/dev/null; then adduser kiosk "$grp" >/dev/null || true; fi
     done
     mkdir -p "$STATE_DIR"
@@ -26,6 +26,11 @@ case "$1" in
     if [ -f "$APP_DIR/chrome-sandbox" ]; then
       chown root:root "$APP_DIR/chrome-sandbox"
       chmod 4755 "$APP_DIR/chrome-sandbox"
+    fi
+
+    # Port 80 for the phone setup page (see sysctl.d file); applies now, not only after a reboot.
+    if [ -f /etc/sysctl.d/50-fieldlink-kiosk.conf ]; then
+      sysctl -q -p /etc/sysctl.d/50-fieldlink-kiosk.conf >/dev/null 2>&1 || true
     fi
 
     # The unit is enabled by the image build (and by hand on a stock Pi OS);

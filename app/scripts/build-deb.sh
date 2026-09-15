@@ -33,7 +33,7 @@ npx --no-install @electron/packager . "$NAME" \
   --platform=linux --arch="$PACKAGER_ARCH" \
   --out="$PACK" --overwrite --asar \
   --app-version="$VERSION" \
-  --ignore='^/dist' --ignore='^/debian' --ignore='^/scripts' --ignore='^/node_modules' \
+  --ignore='^/dist' --ignore='^/debian' --ignore='^/scripts' --ignore='^/test' \
   --ignore='^/config(\.example)?\.json' --ignore='^/\.gitignore' --ignore='^/README\.md'
 
 APP_SRC="$PACK/${NAME}-linux-${PACKAGER_ARCH}"
@@ -41,7 +41,8 @@ test -x "$APP_SRC/$NAME"
 
 echo "==> assembling package tree"
 install -d "$ROOT/DEBIAN" "$ROOT/opt" "$ROOT/usr/bin" "$ROOT/usr/lib/systemd/system" \
-  "$ROOT/etc/pam.d" "$ROOT/usr/share/doc/$NAME"
+  "$ROOT/etc/pam.d" "$ROOT/etc/polkit-1/rules.d" "$ROOT/etc/NetworkManager/dnsmasq-shared.d" \
+  "$ROOT/etc/sysctl.d" "$ROOT/usr/share/doc/$NAME"
 cp -a "$APP_SRC" "$ROOT/opt/$NAME"
 # packager leaves its output directory 0700; the app runs as the kiosk user.
 chmod 0755 "$ROOT/opt/$NAME"
@@ -50,9 +51,13 @@ ln -s "/opt/$NAME/$NAME" "$ROOT/usr/bin/$NAME"
 install -m 0755 debian/fieldlink-kiosk-session "$ROOT/usr/bin/fieldlink-kiosk-session"
 install -m 0644 debian/fieldlink-kiosk.service "$ROOT/usr/lib/systemd/system/fieldlink-kiosk.service"
 install -m 0644 debian/pam.d-fieldlink-kiosk "$ROOT/etc/pam.d/fieldlink-kiosk"
+install -m 0644 debian/polkit-fieldlink-kiosk.rules "$ROOT/etc/polkit-1/rules.d/50-fieldlink-kiosk.rules"
+install -m 0644 debian/dnsmasq-shared-fieldlink.conf "$ROOT/etc/NetworkManager/dnsmasq-shared.d/fieldlink-kiosk.conf"
+install -m 0644 debian/sysctl-fieldlink-kiosk.conf "$ROOT/etc/sysctl.d/50-fieldlink-kiosk.conf"
 install -m 0644 debian/copyright "$ROOT/usr/share/doc/$NAME/copyright"
 install -m 0755 debian/postinst debian/prerm debian/postrm "$ROOT/DEBIAN/"
-printf '/etc/pam.d/fieldlink-kiosk\n' > "$ROOT/DEBIAN/conffiles"
+printf '%s\n' /etc/pam.d/fieldlink-kiosk /etc/polkit-1/rules.d/50-fieldlink-kiosk.rules \
+  /etc/NetworkManager/dnsmasq-shared.d/fieldlink-kiosk.conf /etc/sysctl.d/50-fieldlink-kiosk.conf > "$ROOT/DEBIAN/conffiles"
 
 SIZE_KB="$(du -sk --apparent-size "$ROOT" --exclude=DEBIAN | cut -f1)"
 sed -e "s/@VERSION@/$VERSION/" -e "s/@ARCH@/$ARCH/" -e "s/@SIZE@/$SIZE_KB/" debian/control.in > "$ROOT/DEBIAN/control"

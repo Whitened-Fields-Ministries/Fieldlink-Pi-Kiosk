@@ -66,6 +66,16 @@
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
   .pill.ok { color: var(--ok); border-color: rgba(74,222,128,0.35); } .pill.warn { color: var(--warn); border-color: rgba(251,191,36,0.35); } .pill.bad { color: var(--bad); border-color: rgba(248,113,113,0.35); }
   .small { font-size: 0.82rem; }
+  .wifibox { display: flex; gap: 1.1rem; align-items: flex-start; background: var(--panel2); border: 1px solid var(--border); border-radius: 1rem; padding: 0.9rem 1.1rem; margin-top: 0.4rem; }
+  .wifibox img { width: clamp(9rem, 15vw, 14rem); height: auto; background: #fff; border-radius: 0.6rem; padding: 0.3rem; flex: none; image-rendering: pixelated; }
+  .wifibox .steps { margin-top: 6px; }
+  .wifilist { max-height: 13rem; overflow: auto; border: 1px solid var(--border); border-radius: 0.75rem; background: #0b1220; margin-top: 4px; }
+  .wifilist div { display: flex; justify-content: space-between; gap: 10px; padding: 0.5rem 0.8rem; border-top: 1px solid var(--border); cursor: pointer; }
+  .wifilist div:first-child { border-top: 0; }
+  .wifilist div.sel { color: var(--gold); }
+  .wifilist .m { color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
+  input[type=password] { width: 100%; padding: 0.65rem 0.85rem; border-radius: 0.75rem; border: 1px solid var(--border); background: #0b1220; color: var(--text); font: inherit; outline: none; user-select: text; }
+  input[type=password]:focus { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-dim); }
   /* Short screens: trim the least useful chrome first. */
   @media (max-height: 760px) {
     .brand { display: none; }
@@ -101,6 +111,48 @@
     <div id="r-manual" class="reason hidden">
       <h1>Kiosk settings</h1>
       <p>Opened with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>. Press it again or choose <strong>Back to kiosk</strong> to return to the map.</p>
+    </div>
+
+    <!-- Wi-Fi setup: shown instead of the pairing code while there is no network -->
+    <div id="wifi-block" class="hidden">
+      <div id="wifi-hotspot" class="hidden">
+        <div class="wifibox">
+          <img id="wifi-qr" alt="Wi-Fi setup code">
+          <div style="flex:1">
+            <label style="margin-bottom:0">Set up Wi‑Fi from your phone</label>
+            <ol class="steps">
+              <li>Point the phone's camera at the code and join the network <strong id="hs-ssid">FieldLink-…</strong> (password <code id="hs-pass">…</code>).</li>
+              <li>A setup page opens by itself. If it does not, open <strong>http://10.42.0.1</strong> in the phone's browser.</li>
+              <li>Pick your church's Wi‑Fi and type its password. The pairing code appears here.</li>
+            </ol>
+            <div id="wifi-msg" class="msg"></div>
+            <div class="row"><button id="wifi-kbd" class="link">Use a keyboard instead</button><button id="wifi-hs-off" class="link">Turn the setup network off</button></div>
+          </div>
+        </div>
+      </div>
+      <div id="wifi-connecting" class="hidden">
+        <div class="pairbox"><div class="bigcode dim">Joining <span id="wifi-cssid"></span>…</div><div class="sub">Usually takes 10–30 seconds.</div></div>
+      </div>
+      <div id="wifi-waiting" class="hidden">
+        <p id="wifi-wait-text">No network cable and no Wi‑Fi yet. Looking for a saved Wi‑Fi network; the phone setup network switches on if none is found.</p>
+        <div class="row"><button id="wifi-start" class="primary">Set up Wi‑Fi from a phone now</button><button id="wifi-kbd2" class="link">Use a keyboard instead</button></div>
+        <div id="wifi-wait-msg" class="msg"></div>
+      </div>
+      <div id="wifi-picker" class="hidden">
+        <label>Choose a network</label>
+        <div id="wifi-list" class="wifilist"><div class="m">Scanning…</div></div>
+        <div class="row"><button id="wifi-rescan">Scan again</button><button id="wifi-other" class="link">Other network…</button><button id="wifi-picker-close" class="link">Close</button></div>
+        <div id="wifi-form" class="field hidden">
+          <label for="wifi-ssid">Network</label>
+          <input id="wifi-ssid" type="text" autocomplete="off" spellcheck="false">
+          <label for="wifi-pass" style="margin-top:8px">Password</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="wifi-pass" type="password" autocomplete="off" style="flex:1">
+            <button id="wifi-join" class="primary">Join</button>
+          </div>
+          <div id="wifi-form-msg" class="msg"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Primary: code shown here, typed into FieldLink Admin -->
@@ -151,6 +203,7 @@
       <b>Key</b><span id="m-key">—</span>
       <b>Last check</b><span id="m-check">—</span>
       <b>Network</b><span id="m-net">—</span>
+      <b>Wi‑Fi</b><span id="m-wifi">—</span>
       <b>Clock</b><span id="m-clock">—</span>
       <b>Config file</b><span id="m-config">—</span>
       <b>Log file</b><span id="m-log">—</span>
@@ -170,6 +223,16 @@
         <li>The map appears here within a few seconds.</li>
       </ol>
       <p class="small" style="margin-top:8px">Codes change every 15 minutes on their own. Only Super Admins can link displays.</p>
+    </div>
+
+    <div class="block" id="wifi-side">
+      <h2>Wi‑Fi <span id="wifi-pill" class="pill">—</span></h2>
+      <p id="wifi-side-text" class="small">—</p>
+      <div class="row" style="margin-top:6px">
+        <button id="wifi-change">Change network</button>
+        <button id="wifi-phone">Set up from a phone</button>
+      </div>
+      <div id="wifi-side-msg" class="msg"></div>
     </div>
 
     <div class="block" id="device-block">
@@ -230,7 +293,7 @@
     $('status-text').textContent = text;
     $('offline-hint').textContent = noNet
       ? 'This display has no network address yet. Check that the network cable is plugged into the Pi and into a working port on the router or switch.'
-      : 'If this stays up for more than a few minutes: check the network cable, the router, and whether other devices in the building have internet.';
+      : 'If this stays up for more than a few minutes: check the network cable or Wi‑Fi, the router, and whether other devices in the building have internet.';
 
     $('m-name').textContent   = s.keyName || (s.hasConfig ? '(unknown — server not reached yet)' : 'not linked');
     $('m-server').textContent = s.server || (s.pair && s.pair.origin) || s.defaultServer || '—';
@@ -245,6 +308,7 @@
     $('m-version').textContent = 'FieldLinkPiKiosk ' + (s.appVersion || '?');
     if (!$('server').value) $('server').value = s.server || (s.pair && s.pair.origin) || s.defaultServer || '';
     renderPair(s.pair);
+    renderNet(s.net);
 
     if (tick) clearInterval(tick);
     tick = setInterval(() => {
@@ -256,6 +320,119 @@
       if (state && state.pair && state.pair.status === 'waiting') renderPair(state.pair);
     }, 1000);
   }
+
+  // ── Wi-Fi ────────────────────────────────────────────────────────────────
+  let pickerOpen = false;
+  let pickedSsid = null, pickedSecured = true;
+
+  function setShown(id, on) { $(id).classList.toggle('hidden', !on); }
+
+  function renderNet(n) {
+    const wifiPresent = !!(n && n.available && n.wifi);
+    const offline = !!(n && n.available && !n.online);
+    const reason = state && state.reason;
+    const setupReason = reason === 'offline' || reason === 'no-config' || reason === 'manual' || reason === 'server';
+    // While offline with a radio, the Wi-Fi block takes the place of the pairing code.
+    const showBlock = wifiPresent && ((offline && setupReason) || pickerOpen);
+    setShown('wifi-block', showBlock);
+    setShown('pair-display', !(wifiPresent && offline && setupReason) && ['invalid-key', 'no-config', 'manual'].includes(reason));
+    setShown('wifi-hotspot', showBlock && !pickerOpen && n.phase === 'hotspot');
+    setShown('wifi-connecting', showBlock && !pickerOpen && n.phase === 'connecting');
+    setShown('wifi-waiting', showBlock && !pickerOpen && n.phase === 'idle');
+    setShown('wifi-picker', showBlock && pickerOpen);
+    if (n && n.phase === 'hotspot' && n.hotspot) {
+      if (n.hotspot.qr) $('wifi-qr').src = n.hotspot.qr;
+      $('hs-ssid').textContent = n.hotspot.ssid || '—';
+      $('hs-pass').textContent = n.hotspot.password || '—';
+      say('wifi-msg', n.failedSsid ? 'Could not join ' + n.failedSsid + ': ' + (n.lastError || 'unknown error') + ' The setup network is back on; try again from the phone.' : (n.lastError || ''), n.failedSsid || n.lastError ? 'bad' : '');
+    }
+    if (n && n.phase === 'connecting') $('wifi-cssid').textContent = n.connectingSsid || '';
+    if (n && n.phase === 'idle') {
+      const saved = n.saved && n.saved.length;
+      $('wifi-wait-text').textContent = n.error ? 'Wi‑Fi is not available: ' + n.error
+        : (saved ? 'No network cable, and the saved Wi‑Fi network (' + n.saved.join(', ') + ') is not reachable right now. Trying again by itself; the phone setup network switches on after a few minutes.'
+                 : 'No network cable and no Wi‑Fi set up yet. The phone setup network switches on in a moment.');
+      say('wifi-wait-msg', n.failedSsid ? 'Could not join ' + n.failedSsid + ': ' + (n.lastError || '') : '', n.failedSsid ? 'bad' : '');
+    }
+    // Side card + details
+    const pill = $('wifi-pill'), txt = $('wifi-side-text');
+    if (!n || !n.available) { pill.textContent = 'n/a'; pill.className = 'pill'; txt.textContent = n && n.error ? n.error : 'Not available on this device.'; $('m-wifi').textContent = '—'; ['wifi-change', 'wifi-phone'].forEach(id => $(id).disabled = true); return; }
+    ['wifi-change', 'wifi-phone'].forEach(id => $(id).disabled = !n.wifi);
+    if (!n.wifi) { pill.textContent = 'no adapter'; pill.className = 'pill warn'; txt.textContent = 'This device has no Wi‑Fi adapter; it uses the network cable.'; $('m-wifi').textContent = 'no adapter'; }
+    else if (n.wifi.ssid && n.wifi.ip) { pill.textContent = 'connected'; pill.className = 'pill ok'; txt.textContent = 'Connected to ' + n.wifi.ssid + ' (' + n.wifi.ip + ').' + (n.eth && n.eth.ip ? ' The network cable is in use as well.' : ''); $('m-wifi').textContent = n.wifi.ssid + ' · ' + n.wifi.ip; }
+    else if (n.phase === 'hotspot') { pill.textContent = 'setup mode'; pill.className = 'pill warn'; txt.textContent = 'The setup network ' + (n.hotspot.ssid || '') + ' is on; a phone can pick the church Wi‑Fi.'; $('m-wifi').textContent = 'setup network ' + (n.hotspot.ssid || ''); }
+    else if (n.phase === 'connecting') { pill.textContent = 'joining'; pill.className = 'pill warn'; txt.textContent = 'Joining ' + (n.connectingSsid || '') + '…'; $('m-wifi').textContent = 'joining ' + (n.connectingSsid || ''); }
+    else if (n.eth && n.eth.ip) { pill.textContent = 'not in use'; pill.className = 'pill'; txt.textContent = 'On the network cable (' + n.eth.ip + '). Wi‑Fi is only used when the cable is out.' + (n.saved && n.saved.length ? ' Saved: ' + n.saved.join(', ') + '.' : ''); $('m-wifi').textContent = n.saved && n.saved.length ? 'saved: ' + n.saved.join(', ') : 'none saved'; }
+    else { pill.textContent = 'off'; pill.className = 'pill warn'; txt.textContent = n.saved && n.saved.length ? 'Not connected. Saved: ' + n.saved.join(', ') + '.' : 'Not connected and no network saved.'; $('m-wifi').textContent = n.saved && n.saved.length ? 'saved: ' + n.saved.join(', ') : 'none saved'; }
+  }
+
+  function renderList(list, note) {
+    const box = $('wifi-list'); box.innerHTML = '';
+    if (note) { const d = document.createElement('div'); d.className = 'm'; d.textContent = note; box.appendChild(d); }
+    if (!list || !list.length) { const d = document.createElement('div'); d.className = 'm'; d.textContent = 'No networks found. Scan again, or choose Other network.'; box.appendChild(d); return; }
+    list.forEach(n => {
+      const d = document.createElement('div');
+      const name = document.createElement('span'); name.textContent = n.ssid;
+      const meta = document.createElement('span'); meta.className = 'm'; meta.textContent = (n.secured ? '🔒 ' : 'open ') + n.signal + '%' + (n.band ? ' · ' + n.band + ' GHz' : '');
+      d.appendChild(name); d.appendChild(meta);
+      if (pickedSsid === n.ssid) d.classList.add('sel');
+      d.addEventListener('click', () => pickNetwork(n.ssid, n.secured));
+      box.appendChild(d);
+    });
+  }
+
+  function pickNetwork(ssid, secured) {
+    pickedSsid = ssid; pickedSecured = secured !== false;
+    $('wifi-form').classList.remove('hidden');
+    $('wifi-ssid').value = ssid || ''; $('wifi-ssid').readOnly = !!ssid;
+    $('wifi-pass').value = ''; $('wifi-pass').placeholder = pickedSecured ? 'Wi‑Fi password' : 'No password needed';
+    say('wifi-form-msg', '');
+    document.querySelectorAll('#wifi-list div').forEach(el => el.classList.toggle('sel', el.firstChild && el.firstChild.textContent === ssid));
+    (ssid ? $('wifi-pass') : $('wifi-ssid')).focus();
+  }
+
+  async function openPicker() {
+    pickerOpen = true; pickedSsid = null;
+    $('wifi-form').classList.add('hidden');
+    if (state) renderNet(state.net);
+    renderList([], 'Scanning…');
+    if (!bridge) return;
+    const r = await bridge.wifiScan();
+    renderList(r.networks, r.error ? 'Scan failed: ' + r.error : (r.cached ? 'List from just before the setup network started.' : ''));
+  }
+  function closePicker() { pickerOpen = false; if (state) renderNet(state.net); }
+
+  $('wifi-kbd').addEventListener('click', openPicker);
+  $('wifi-kbd2').addEventListener('click', openPicker);
+  $('wifi-change').addEventListener('click', openPicker);
+  $('wifi-rescan').addEventListener('click', openPicker);
+  $('wifi-other').addEventListener('click', () => pickNetwork('', true));
+  $('wifi-picker-close').addEventListener('click', closePicker);
+  $('wifi-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('wifi-join').click(); });
+  $('wifi-ssid').addEventListener('keydown', e => { if (e.key === 'Enter') $('wifi-pass').focus(); });
+  $('wifi-join').addEventListener('click', async () => {
+    if (!bridge) return;
+    const ssid = $('wifi-ssid').value.trim(), pass = $('wifi-pass').value;
+    if (!ssid) return say('wifi-form-msg', 'Enter the network name.', 'bad');
+    if (pickedSecured && pass.length < 8) return say('wifi-form-msg', 'Wi‑Fi passwords are at least 8 characters.', 'bad');
+    $('wifi-join').disabled = true;
+    say('wifi-form-msg', 'Joining ' + ssid + '…');
+    pickerOpen = false;
+    const r = await bridge.wifiConnect(ssid, pass);
+    $('wifi-join').disabled = false;
+    if (!r.ok) { pickerOpen = true; if (state) renderNet(state.net); say('wifi-form-msg', r.error || 'Could not join.', 'bad'); }
+    else { say('wifi-form-msg', 'Joined ' + ssid + '.', 'ok'); }
+  });
+  $('wifi-start').addEventListener('click', async () => { if (!bridge) return; $('wifi-start').disabled = true; say('wifi-wait-msg', 'Starting the setup network…'); await bridge.wifiHotspot(true); $('wifi-start').disabled = false; });
+  $('wifi-hs-off').addEventListener('click', async () => { if (bridge) await bridge.wifiHotspot(false); });
+  $('wifi-phone').addEventListener('click', async () => {
+    if (!bridge) return;
+    const n = state && state.net;
+    if (n && n.online && n.wifi && n.wifi.ip && !(n.eth && n.eth.ip) && !window.confirm('The display is on Wi‑Fi now. Starting the setup network disconnects it until a new network is chosen from a phone. Continue?')) return;
+    say('wifi-side-msg', 'Starting the setup network…');
+    await bridge.wifiHotspot(true);
+    say('wifi-side-msg', '');
+  });
 
   $('url').addEventListener('keydown', e => { if (e.key === 'Enter') $('url-btn').click(); });
   $('server').addEventListener('keydown', e => { if (e.key === 'Enter') $('server-btn').click(); });
@@ -296,7 +473,7 @@
     bridge.getState().then(render);
   } else {
     // Opened outside the app (e.g. in a browser while developing) or by the CI smoke test.
-    render({ reason: new URLSearchParams(location.search).get('reason') || 'no-config', hasConfig: false, defaultServer: 'https://app.fieldlinkmissions.com', configTargets: ['(not running inside the kiosk app)'], addresses: ['eth0 192.0.2.10'], clockSynced: true, hostname: 'fieldlink-kiosk', platform: 'linux', appVersion: '0.0.0', electron: '?', pair: { status: 'waiting', code: 'K7M-3PX', expiresAt: Date.now() + 14 * 60 * 1000, origin: 'https://app.fieldlinkmissions.com' } });
+    render({ reason: new URLSearchParams(location.search).get('reason') || 'no-config', hasConfig: false, defaultServer: 'https://app.fieldlinkmissions.com', configTargets: ['(not running inside the kiosk app)'], addresses: ['eth0 192.0.2.10'], clockSynced: true, hostname: 'fieldlink-kiosk', platform: 'linux', appVersion: '0.0.0', electron: '?', pair: { status: 'waiting', code: 'K7M-3PX', expiresAt: Date.now() + 14 * 60 * 1000, origin: 'https://app.fieldlinkmissions.com' }, net: { available: true, online: true, eth: { ip: '192.0.2.10', state: 'connected' }, wifi: { state: 'disconnected' }, saved: [], hotspot: {}, phase: 'idle', networks: [] } });
   }
 })();
 </script>
