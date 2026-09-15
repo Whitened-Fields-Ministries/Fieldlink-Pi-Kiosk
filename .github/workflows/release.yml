@@ -13,13 +13,13 @@ name: Image
 # Both jobs run on the free arm64 runner, so pi-gen builds natively (no QEMU).
 
 on:
-  push:
-    tags: ['v*']
   # Every merge to main that touches the app or the image builds a dev image
-  # (artifact only, ~10 min): that is what gets flashed onto the test Pi.
+  # (artifact only, ~10 min): that is what gets flashed onto the test Pi. The
+  # "Should the image be built?" step below is the paths filter (a paths:
+  # filter here would also apply to tag pushes, which must always build).
   push:
     branches: [main]
-    paths: ['app/**', 'image/**', '.github/workflows/release.yml', '.github/actions/build-deb/**']
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       ssh_pubkey:
@@ -36,8 +36,20 @@ jobs:
     runs-on: ubuntu-24.04-arm
     outputs:
       version: ${{ steps.version.outputs.version }}
+      build_image: ${{ steps.gate.outputs.build_image }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Should the image be built?
+        id: gate
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            echo "build_image=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          changed="$(git diff --name-only HEAD^ HEAD -- app image .github/workflows/release.yml .github/actions/build-deb 2>/dev/null || echo forced)"
+          if [ -n "$changed" ]; then echo "build_image=true" >> "$GITHUB_OUTPUT"; echo "$changed" | head -20; else echo "build_image=false" >> "$GITHUB_OUTPUT"; echo "nothing under app/ or image/ changed — no image build"; fi
 
       - name: Version
         id: version
@@ -66,6 +78,7 @@ jobs:
   image:
     name: Build image
     needs: deb
+    if: needs.deb.outputs.build_image == 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     env:

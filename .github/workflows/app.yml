@@ -38,7 +38,7 @@ jobs:
           shellcheck -S warning -s sh app/debian/postinst app/debian/prerm app/debian/postrm app/debian/fieldlink-kiosk-session
           shellcheck -S warning app/scripts/build-deb.sh image/stage-fieldlink/prerun.sh image/stage-fieldlink/00-kiosk/01-run.sh
           systemd-analyze verify --man=no app/debian/fieldlink-kiosk.service 2>&1 | grep -v 'fieldlink-kiosk-session' || true
-          python3 -c "import yaml,sys; [yaml.safe_load(open(f)) for f in sys.argv[1:]]" .github/workflows/*.yml .github/actions/build-deb/action.yml
+          python3 scripts/check-workflows.py .github/workflows/*.yml .github/actions/build-deb/action.yml
 
   deb:
     name: Build and test .deb
