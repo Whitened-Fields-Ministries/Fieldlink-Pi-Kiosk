@@ -1,0 +1,3 @@
+# The FieldLink display (user kiosk) may run its root helper, and nothing else.
+# The helper is a fixed menu (see /usr/lib/fieldlink-kiosk/root-helper).
+kiosk ALL=(root) NOPASSWD: /usr/lib/fieldlink-kiosk/root-helper

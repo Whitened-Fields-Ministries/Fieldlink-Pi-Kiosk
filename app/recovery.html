@@ -66,6 +66,8 @@
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
   .pill.ok { color: var(--ok); border-color: rgba(74,222,128,0.35); } .pill.warn { color: var(--warn); border-color: rgba(251,191,36,0.35); } .pill.bad { color: var(--bad); border-color: rgba(248,113,113,0.35); }
   .small { font-size: 0.82rem; }
+  button.danger { border-color: rgba(248,113,113,0.4); color: var(--bad); }
+  .joblog { font: 0.7rem/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--muted); background: #070b14; border-radius: 8px; padding: 6px 8px; max-height: 7.5rem; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; user-select: text; }
   .wifibox { display: flex; gap: 1.1rem; align-items: flex-start; background: var(--panel2); border: 1px solid var(--border); border-radius: 1rem; padding: 0.9rem 1.1rem; margin-top: 0.4rem; }
   .wifibox img { width: clamp(9rem, 15vw, 14rem); height: auto; background: #fff; border-radius: 0.6rem; padding: 0.3rem; flex: none; image-rendering: pixelated; }
   .wifibox .steps { margin-top: 6px; }
@@ -235,10 +237,32 @@
       <div id="wifi-side-msg" class="msg"></div>
     </div>
 
+    <div class="block" id="update-block">
+      <h2>Updates <span id="update-pill" class="pill">—</span></h2>
+      <p id="update-text" class="small">Installed: <span id="m-version">—</span>.</p>
+      <div class="row" style="margin-top:6px">
+        <button id="check-btn">Check now</button>
+        <button id="install-btn" class="primary hidden">Install update</button>
+      </div>
+      <pre id="update-log" class="joblog hidden"></pre>
+      <div id="update-msg" class="msg"></div>
+      <p class="small" id="auto-text">New builds install by themselves overnight; the display restarts for a few seconds.</p>
+      <div id="channel-field" class="field hidden">
+        <label>Update channel (staff)</label>
+        <div class="row" style="margin-top:0"><span id="m-channel" class="pill">—</span><button id="chan-prod" class="link">use prod</button><button id="chan-qa" class="link">use qa</button></div>
+      </div>
+    </div>
+
     <div class="block" id="device-block">
       <h2>This display <span id="device-pill" class="pill">Raspberry Pi</span></h2>
       <p class="small">Runs the FieldLink kiosk image. It starts the display by itself at power-on and needs no login, mouse or keyboard. If it ever misbehaves, unplug the power, wait five seconds and plug it back in.</p>
-      <p class="small" id="update-text">Installed: <span id="m-version">—</span>. Software updates are delivered with the image; automatic updates arrive in a later release.</p>
+      <div class="row" style="margin-top:6px">
+        <button id="restart-btn">Restart</button>
+        <button id="logs-btn">Show log</button>
+        <button id="reset-btn" class="danger">Factory reset</button>
+      </div>
+      <div id="device-msg" class="msg"></div>
+      <pre id="logs-box" class="joblog hidden" style="max-height:12rem"></pre>
     </div>
   </div>
 </div>
@@ -262,6 +286,7 @@
     // The server field is for staff only (a QA display, a self-hosted FieldLink):
     // it stays hidden until Ctrl+Shift+S is pressed on this screen.
     $('server-field').classList.toggle('hidden', !(serverRevealed && (reason === 'no-config' || reason === 'manual')));
+    $('channel-field').classList.toggle('hidden', !serverRevealed);
     $('alt').open = false;
     $('back-btn').classList.toggle('hidden', !(state && state.hasConfig && (reason === 'manual' || reason === 'invalid-key')));
   }
@@ -309,6 +334,7 @@
     if (!$('server').value) $('server').value = s.server || (s.pair && s.pair.origin) || s.defaultServer || '';
     renderPair(s.pair);
     renderNet(s.net);
+    renderUpdate(s.updateState);
 
     if (tick) clearInterval(tick);
     tick = setInterval(() => {
@@ -320,6 +346,56 @@
       if (state && state.pair && state.pair.status === 'waiting') renderPair(state.pair);
     }, 1000);
   }
+
+  // ── Updates / maintenance ────────────────────────────────────────────────
+  function renderUpdate(u) {
+    const pill = $('update-pill'), txt = $('update-text'), install = $('install-btn'), logBox = $('update-log');
+    $('m-version').textContent = 'FieldLinkPiKiosk ' + ((u && u.installed) || (state && state.appVersion) || '?');
+    if (!u) { pill.textContent = '—'; pill.className = 'pill'; txt.textContent = 'Installed: FieldLinkPiKiosk ' + ((state && state.appVersion) || '?') + '. Not checked yet.'; install.classList.add('hidden'); logBox.classList.add('hidden'); return; }
+    $('m-channel').textContent = u.channel || '—';
+    if (u.phase === 'checking') { pill.textContent = 'checking…'; pill.className = 'pill'; }
+    else if (u.phase === 'installing') { pill.textContent = 'installing'; pill.className = 'pill warn'; }
+    else if (u.phase === 'failed') { pill.textContent = 'failed'; pill.className = 'pill bad'; }
+    else if (u.available === false || u.channel === 'none') { pill.textContent = 'n/a'; pill.className = 'pill'; }
+    else if (u.newer) { pill.textContent = u.candidate + ' available'; pill.className = 'pill warn'; }
+    else { pill.textContent = 'up to date'; pill.className = 'pill ok'; }
+    txt.textContent = 'Installed: FieldLinkPiKiosk ' + (u.installed || '?') + (u.channel && u.channel !== 'none' ? ' · channel ' + u.channel : '') + '. ' + (u.message || '');
+    install.classList.toggle('hidden', !(u.newer && u.phase !== 'installing'));
+    const busy = u.phase === 'checking' || u.phase === 'installing';
+    $('check-btn').disabled = busy; install.disabled = busy;
+    logBox.classList.toggle('hidden', !(u.lines && u.lines.length));
+    logBox.textContent = (u.lines || []).join('\n'); logBox.scrollTop = logBox.scrollHeight;
+    say('update-msg', u.error && u.phase !== 'checking' ? u.error : '', u.error ? 'bad' : '');
+  }
+  $('check-btn').addEventListener('click', async () => { if (!bridge) return; say('update-msg', ''); renderUpdate(await bridge.updateCheck()); });
+  $('install-btn').addEventListener('click', async () => {
+    if (!bridge) return;
+    if (!window.confirm('Install the update now?\n\nThe display goes dark for a few seconds while it restarts.')) return;
+    const r = await bridge.updateInstall();
+    if (!r.ok) say('update-msg', r.error || 'Could not start the update.', 'bad');
+    else if (r.upToDate) say('update-msg', 'Already up to date.', 'ok');
+  });
+  $('chan-prod').addEventListener('click', async () => { if (!bridge) return; say('update-msg', 'Switching to prod…'); const r = await bridge.setChannel('prod'); say('update-msg', r.ok ? 'Channel: prod' : (r.error || 'Failed'), r.ok ? 'ok' : 'bad'); });
+  $('chan-qa').addEventListener('click', async () => { if (!bridge) return; say('update-msg', 'Switching to qa…'); const r = await bridge.setChannel('qa'); say('update-msg', r.ok ? 'Channel: qa' : (r.error || 'Failed'), r.ok ? 'ok' : 'bad'); });
+  $('restart-btn').addEventListener('click', async () => {
+    if (!bridge || !window.confirm('Restart this display now? It is back in about a minute.')) return;
+    const r = await bridge.restart(); say('device-msg', r.ok ? 'Restarting…' : (r.error || 'Could not restart.'), r.ok ? 'ok' : 'bad');
+  });
+  $('reset-btn').addEventListener('click', async () => {
+    if (!bridge) return;
+    if (!window.confirm('Factory reset this display?\n\nIt forgets its FieldLink link and every saved Wi-Fi network, then restarts and shows a new pairing code. Nothing on the FieldLink server is changed.')) return;
+    if (!window.confirm('Really reset? This cannot be undone from here.')) return;
+    const r = await bridge.factoryReset(); say('device-msg', r.ok ? 'Resetting and restarting…' : (r.error || 'Could not reset.'), r.ok ? 'ok' : 'bad');
+  });
+  $('logs-btn').addEventListener('click', async () => {
+    if (!bridge) return;
+    const box = $('logs-box');
+    if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+    box.textContent = 'Loading…'; box.classList.remove('hidden');
+    const l = await bridge.logs();
+    box.textContent = '── journal (fieldlink-kiosk) ──\n' + (l.journal || '(empty)') + '\n\n── kiosk.log ──\n' + (l.app || '(empty)') + (l.update ? '\n\n── last update ──\n' + l.update : '');
+    box.scrollTop = box.scrollHeight;
+  });
 
   // ── Wi-Fi ────────────────────────────────────────────────────────────────
   let pickerOpen = false;
@@ -471,9 +547,10 @@
   if (bridge && !new URLSearchParams(location.search).get('smoke')) {
     bridge.onState(render);
     bridge.getState().then(render);
+    bridge.updateState().then(u => { if (!u) bridge.updateCheck(); });
   } else {
     // Opened outside the app (e.g. in a browser while developing) or by the CI smoke test.
-    render({ reason: new URLSearchParams(location.search).get('reason') || 'no-config', hasConfig: false, defaultServer: 'https://app.fieldlinkmissions.com', configTargets: ['(not running inside the kiosk app)'], addresses: ['eth0 192.0.2.10'], clockSynced: true, hostname: 'fieldlink-kiosk', platform: 'linux', appVersion: '0.0.0', electron: '?', pair: { status: 'waiting', code: 'K7M-3PX', expiresAt: Date.now() + 14 * 60 * 1000, origin: 'https://app.fieldlinkmissions.com' }, net: { available: true, online: true, eth: { ip: '192.0.2.10', state: 'connected' }, wifi: { state: 'disconnected' }, saved: [], hotspot: {}, phase: 'idle', networks: [] } });
+    render({ reason: new URLSearchParams(location.search).get('reason') || 'no-config', hasConfig: false, defaultServer: 'https://app.fieldlinkmissions.com', configTargets: ['(not running inside the kiosk app)'], addresses: ['eth0 192.0.2.10'], clockSynced: true, hostname: 'fieldlink-kiosk', platform: 'linux', appVersion: '0.0.0', electron: '?', pair: { status: 'waiting', code: 'K7M-3PX', expiresAt: Date.now() + 14 * 60 * 1000, origin: 'https://app.fieldlinkmissions.com' }, net: { available: true, online: true, eth: { ip: '192.0.2.10', state: 'connected' }, wifi: { state: 'disconnected' }, saved: [], hotspot: {}, phase: 'idle', networks: [] }, updateState: { phase: 'idle', available: true, installed: '0.0.0', candidate: '0.0.0', newer: false, channel: 'prod', message: 'Up to date (0.0.0).', lines: [] } });
   }
 })();
 </script>

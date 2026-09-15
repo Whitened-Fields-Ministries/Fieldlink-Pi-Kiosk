@@ -5,3 +5,4 @@ libegl-mesa0
 libgles2
 fonts-liberation
 fonts-noto-color-emoji
+unattended-upgrades

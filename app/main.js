@@ -41,6 +41,7 @@ const { app, BrowserWindow, ipcMain, net, powerSaveBlocker } = require('electron
 const path = require('path');
 const fs   = require('fs');
 const os   = require('os');
+const { execFile } = require('child_process');
 const QRCode = require('qrcode');
 const network = require('./network');
 const { createSetupServer } = require('./setup-server');
@@ -271,6 +272,7 @@ function stateForPage() {
     pair:          pair ? { code: pair.code, expiresAt: pair.expiresAt, origin: pair.origin, status: pair.status, error: pair.error } : null,
     platform:      process.platform,
     net:           netForPage(),
+    updateState,
   };
 }
 
@@ -448,6 +450,165 @@ function onConfigChanged() {
   }
 }
 
+// ── Updates, restart, factory reset: the root helper ─────────────────────────
+// Everything that needs root goes through /usr/lib/fieldlink-kiosk/root-helper
+// (shipped in the .deb, allowed for the kiosk user by a sudoers entry). It is
+// a fixed menu; see the script for the commands. New builds arrive through
+// the signed apt repository (nightly by unattended-upgrades, or from the
+// settings screen here); the package's postinst restarts the display.
+const ROOT_HELPER = '/usr/lib/fieldlink-kiosk/root-helper';
+let updateState = null; // { phase: idle|checking|installing|done|failed, installed, candidate, newer, channel, message, lines, checkedAt, error, available }
+
+function setUpdateState(patch) {
+  updateState = { ...(updateState || {}), ...patch, updatedAt: Date.now() };
+  pushState();
+}
+
+function runHelper(args, { timeoutMs = 10 * 60 * 1000, onLine } = {}) {
+  return new Promise(resolve => {
+    let stdout = '', stderr = '', buf = '';
+    const child = execFile('sudo', ['-n', ROOT_HELPER, ...args], { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (err, out, errOut) => {
+      const code = err ? (typeof err.code === 'number' ? err.code : -1) : 0;
+      const extra = err && typeof err.code !== 'number' ? String(err.message || err) : '';
+      resolve({ code, stdout: String(out || stdout), stderr: String(errOut || stderr) + (extra ? `\n${extra}` : '') });
+    });
+    if (onLine && child.stdout) {
+      child.stdout.on('data', d => { buf += d; const lines = buf.split('\n'); buf = lines.pop(); lines.forEach(l => l.trim() && onLine(l.trim())); });
+    }
+  });
+}
+
+function cmpVersion(a, b) {
+  const pa = String(a).split(/[.+~-]/).map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split(/[.+~-]/).map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0); }
+  return 0;
+}
+
+function helperUnavailable(r) {
+  const t = `${r.stderr} ${r.stdout}`;
+  if (/ENOENT|not found|command not found/i.test(t)) return 'Updates are not available in this build (no root helper).';
+  if (/password is required|not allowed|sudo:/i.test(t)) return 'The display is not allowed to run its update helper (sudoers).';
+  return null;
+}
+
+async function checkUpdate() {
+  if (updateState && ['checking', 'installing'].includes(updateState.phase)) return updateState;
+  setUpdateState({ phase: 'checking', message: 'Checking for a newer build…', error: null, lines: [] });
+  const r = await runHelper(['check-update'], { timeoutMs: 3 * 60 * 1000 });
+  const un = helperUnavailable(r);
+  if (un) { setUpdateState({ phase: 'idle', available: false, installed: APP_VERSION, error: un, message: un }); return updateState; }
+  const get = k => { const m = r.stdout.match(new RegExp(`^${k}=(.*)$`, 'm')); return m ? m[1].trim() : null; };
+  const installed = get('installed') || APP_VERSION;
+  const candidate = get('candidate');
+  const ch = await runHelper(['channel'], { timeoutMs: 30 * 1000 });
+  const channel = (ch.stdout.match(/^channel=(.*)$/m) || [])[1] || 'none';
+  const newer = !!candidate && candidate !== '(none)' && cmpVersion(candidate, installed) > 0;
+  const noSource = channel === 'none';
+  log(`update: installed ${installed}, candidate ${candidate || '?'}, channel ${channel}${r.code ? `, helper exit ${r.code}` : ''}`);
+  setUpdateState({ phase: 'idle', available: true, installed, candidate, newer, channel, checkedAt: Date.now(), error: r.code ? (r.stderr.trim().split('\n').pop() || `helper exit ${r.code}`) : null,
+    message: noSource ? 'This build has no update channel configured.' : newer ? `Version ${candidate} is available.` : `Up to date (${installed}).` });
+  return updateState;
+}
+
+async function installUpdate() {
+  if (updateState && ['checking', 'installing'].includes(updateState.phase)) return { ok: false, error: 'An update is already in progress.' };
+  const st = await checkUpdate();
+  if (st.error && !st.available) return { ok: false, error: st.error };
+  if (!st.newer) return { ok: true, upToDate: true };
+  const from = st.installed, to = st.candidate;
+  setUpdateState({ phase: 'installing', message: `Installing ${to}… the display restarts by itself when it is done.`, lines: [], error: null });
+  try { fs.writeFileSync(path.join(app.getPath('userData'), 'last-update.json'), JSON.stringify({ from, to, startedAt: new Date().toISOString() })); } catch {}
+  log(`update: installing ${to} (from ${from})`);
+  // The helper hands the install to a transient systemd unit (our own service
+  // gets restarted by the package's postinst, which would kill dpkg if it ran
+  // in our cgroup) and returns at once; progress is a log file we tail.
+  const r = await runHelper(['update'], { timeoutMs: 60 * 1000 });
+  if (r.code !== 0) {
+    const msg = (r.stderr.trim().split('\n').filter(Boolean).pop()) || `helper exit ${r.code}`;
+    log(`update: could not start — ${msg}`);
+    setUpdateState({ phase: 'failed', message: `Update could not start: ${msg}`, error: msg });
+    return { ok: false, error: msg };
+  }
+  followUpdateLog(to);
+  return { ok: true };
+}
+
+const UPDATE_LOG = '/var/log/fieldlink-kiosk-update.log';
+function followUpdateLog(to) {
+  const deadline = Date.now() + 15 * 60 * 1000;
+  let seen = 0;
+  const tick = () => {
+    let text = '';
+    try { text = fs.readFileSync(UPDATE_LOG, 'utf8'); } catch {}
+    const lines = text.split('\n').filter(Boolean);
+    if (lines.length !== seen) { seen = lines.length; setUpdateState({ lines: lines.slice(-14) }); }
+    const last = lines[lines.length - 1] || '';
+    if (/^done:/.test(last)) { log(`update: ${last}`); setUpdateState({ phase: 'done', message: `Installed ${to}. Restarting the display…` }); return; }
+    if (/^failed:/.test(last)) { log(`update: ${last}`); setUpdateState({ phase: 'failed', message: `Update failed: ${last.replace(/^failed:\s*/, '')}`, error: last }); return; }
+    if (Date.now() > deadline) { setUpdateState({ phase: 'failed', message: 'The update did not finish within 15 minutes.', error: 'timeout' }); return; }
+    // The unit itself is the source of truth once the log goes quiet.
+    execFile('systemctl', ['is-active', 'fieldlink-kiosk-update'], { timeout: 5000 }, (_e, out) => {
+      const active = String(out || '').trim();
+      if ((active === 'inactive' || active === 'failed') && lines.length && !/^(done|failed):/.test(last) && seen > 1) {
+        setUpdateState({ phase: active === 'failed' ? 'failed' : 'done', message: active === 'failed' ? 'Update failed (see Show log).' : `Installed ${to}. Restarting the display…`, error: active === 'failed' ? 'unit failed' : null });
+        return;
+      }
+      setTimeout(tick, 1000);
+    });
+  };
+  setTimeout(tick, 1000);
+}
+
+// After the package's postinst restarted us, say so once on the settings screen.
+function noteCompletedUpdate() {
+  const file = path.join(app.getPath('userData'), 'last-update.json');
+  try {
+    if (!fs.existsSync(file)) return;
+    const m = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.unlinkSync(file);
+    if (m && m.to && cmpVersion(APP_VERSION, m.from || '0') >= 0) {
+      log(`update: now running ${APP_VERSION} (was ${m.from || '?'}, started ${m.startedAt || '?'})`);
+      updateState = { phase: 'idle', available: true, installed: APP_VERSION, message: `Updated to ${APP_VERSION} (from ${m.from || '?'}).`, lines: [], updatedAt: Date.now() };
+    }
+  } catch {}
+}
+
+ipcMain.handle('kiosk:update-check', () => checkUpdate());
+ipcMain.handle('kiosk:update-install', () => installUpdate());
+ipcMain.handle('kiosk:update-state', () => updateState);
+ipcMain.handle('kiosk:set-channel', async (_e, { channel } = {}) => {
+  if (!['qa', 'prod'].includes(channel)) return { ok: false, error: 'Channel must be qa or prod.' };
+  const r = await runHelper(['channel', channel], { timeoutMs: 3 * 60 * 1000 });
+  const un = helperUnavailable(r);
+  if (un || r.code) return { ok: false, error: un || r.stderr.trim().split('\n').pop() || `helper exit ${r.code}` };
+  log(`update: channel set to ${channel}`);
+  await checkUpdate();
+  return { ok: true, channel };
+});
+ipcMain.handle('kiosk:restart', async () => {
+  log('restart requested from the settings screen');
+  const r = await runHelper(['reboot'], { timeoutMs: 30 * 1000 });
+  const un = helperUnavailable(r);
+  return un || r.code ? { ok: false, error: un || r.stderr.trim() || `helper exit ${r.code}` } : { ok: true };
+});
+ipcMain.handle('kiosk:factory-reset', async () => {
+  log('factory reset requested from the settings screen');
+  stopPairRequest();
+  const r = await runHelper(['factory-reset'], { timeoutMs: 2 * 60 * 1000 });
+  const un = helperUnavailable(r);
+  return un || r.code ? { ok: false, error: un || r.stderr.trim() || `helper exit ${r.code}` } : { ok: true };
+});
+ipcMain.handle('kiosk:logs', async () => {
+  const r = await runHelper(['logs'], { timeoutMs: 30 * 1000 });
+  let own = '';
+  try { own = fs.readFileSync(logPath(), 'utf8').split('\n').slice(-80).join('\n'); } catch {}
+  const journal = helperUnavailable(r) ? `(journal not available: ${helperUnavailable(r)})` : r.stdout;
+  let update = '';
+  try { update = fs.readFileSync(UPDATE_LOG, 'utf8').split('\n').slice(-40).join('\n'); } catch {}
+  return { journal: journal.trim().split('\n').slice(-120).join('\n'), app: own, update };
+});
+
 // ── Network: Ethernet, Wi-Fi and the phone setup hotspot ─────────────────────
 // Ethernet plugged in → nothing to do. No network at all → after a grace
 // period the Pi becomes a Wi-Fi hotspot ("FieldLink-XXXX"), shows a QR code,
@@ -456,8 +617,12 @@ function onConfigChanged() {
 // it. The radio cannot do both at once, so this is a hand-off, not a bridge.
 const NET_POLL_ONLINE_MS      = 30 * 1000;
 const NET_POLL_OFFLINE_MS     = 5 * 1000;
-const HOTSPOT_GRACE_MS        = 45 * 1000;      // no network, nothing saved → hotspot
-const HOTSPOT_GRACE_SAVED_MS  = 3 * 60 * 1000;  // a saved Wi-Fi exists → let NetworkManager try first
+// A display without keyboard or touch has no other way in, so the setup
+// network comes up almost at once. The short waits only give DHCP on a cable
+// or a saved Wi-Fi the few seconds they need at boot.
+const HOTSPOT_GRACE_MS        = 8 * 1000;       // no cable, nothing saved → hotspot
+const HOTSPOT_GRACE_ETH_MS    = 20 * 1000;      // cable plugged in but no address yet (DHCP)
+const HOTSPOT_GRACE_SAVED_MS  = 25 * 1000;      // a saved Wi-Fi exists → let NetworkManager join first
 const HOTSPOT_IDLE_RETRY_MS   = 10 * 60 * 1000; // hotspot up, no phone → retry the saved Wi-Fi
 const HOTSPOT_RETRY_WINDOW_MS = 45 * 1000;      // how long that retry gets
 
@@ -547,7 +712,7 @@ async function netTick() {
     if (netState.retryUntil && Date.now() < netState.retryUntil) return;
     if (netState.retryUntil) { netState.retryUntil = null; await startHotspot('saved Wi-Fi still not reachable'); return; }
     if (!netState.noNetSince) { netState.noNetSince = Date.now(); return; }
-    const grace = st.saved.length ? HOTSPOT_GRACE_SAVED_MS : HOTSPOT_GRACE_MS;
+    const grace = st.saved.length ? HOTSPOT_GRACE_SAVED_MS : (st.eth && st.eth.carrier ? HOTSPOT_GRACE_ETH_MS : HOTSPOT_GRACE_MS);
     if (Date.now() - netState.noNetSince >= grace) await startHotspot(st.saved.length ? 'saved Wi-Fi did not come up' : 'no network');
   } catch (e) {
     log(`net: unexpected error ${e && e.stack || e}`);
@@ -914,6 +1079,7 @@ app.whenReady().then(() => {
   createWindow();
   applyConfig();
   watchConfigDirs();
+  noteCompletedUpdate();
 
   if (kioskUrl) showKiosk(); else showRecovery('no-config');
   scheduleCheck(kioskUrl ? 5000 : HEALTH_INTERVAL_MS);

@@ -77,6 +77,14 @@ if (window.location.protocol === 'file:') {
     wifiConnect: (ssid, password) => ipcRenderer.invoke('kiosk:wifi-connect', { ssid, password }),
     wifiHotspot: (on)             => ipcRenderer.invoke('kiosk:wifi-hotspot', { on }),
     wifiForget:  (ssid)           => ipcRenderer.invoke('kiosk:wifi-forget', { ssid }),
+    // Updates and maintenance (root helper through main.js)
+    updateCheck:   ()        => ipcRenderer.invoke('kiosk:update-check'),
+    updateInstall: ()        => ipcRenderer.invoke('kiosk:update-install'),
+    updateState:   ()        => ipcRenderer.invoke('kiosk:update-state'),
+    setChannel:    (channel) => ipcRenderer.invoke('kiosk:set-channel', { channel }),
+    restart:       ()        => ipcRenderer.invoke('kiosk:restart'),
+    factoryReset:  ()        => ipcRenderer.invoke('kiosk:factory-reset'),
+    logs:          ()        => ipcRenderer.invoke('kiosk:logs'),
     onState:  (cb) => {
       const handler = (_e, state) => cb(state);
       ipcRenderer.on('kiosk:state', handler);
