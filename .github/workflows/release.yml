@@ -10,7 +10,9 @@ name: Release
 #   vX.Y.Z      → Prod. No rebuild: takes the assets of the QA release for the
 #                 same commit, verifies the checksums, points os-list.json at
 #                 the prod URLs and publishes them as the *latest* release —
-#                 the one FieldLink offers for download.
+#                 the one FieldLink offers for download. The same promotion is
+#                 available as a button: Actions → "Promote to prod"
+#                 (promote.yml), which also creates the tag.
 #
 # Both also publish the .deb to the matching apt channel (the "apt-qa" /
 # "apt-prod" releases hold a signed flat apt repository that deployed kiosks
@@ -270,86 +272,17 @@ jobs:
     needs: tag
     if: needs.tag.outputs.channel == 'prod'
     runs-on: ubuntu-24.04-arm
-    env:
-      VERSION: ${{ needs.tag.outputs.version }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Find the QA tag for this commit
-        id: qa
-        run: |
-          set -euo pipefail
-          prod_sha="$(git rev-parse "${GITHUB_REF}^{commit}")"
-          qa_tag=""
-          for t in $(git tag -l "v${VERSION}-qa" "v${VERSION}-qa.*" --sort=-v:refname); do
-            if [[ "$(git rev-parse "${t}^{commit}")" == "$prod_sha" ]]; then qa_tag="$t"; break; fi
-          done
-          if [[ -z "$qa_tag" ]]; then
-            echo "::error::no v${VERSION}-qa tag points at commit ${prod_sha}. Tag QA first, test it, then tag the same commit v${VERSION}."; exit 1
-          fi
-          gh release view "$qa_tag" --repo "$GITHUB_REPOSITORY" --json tagName,isPrerelease -q '.tagName + " prerelease=" + (.isPrerelease|tostring)'
-          echo "qa_tag=$qa_tag" >> "$GITHUB_OUTPUT"
-
-      - name: Download and verify the QA assets
-        run: |
-          set -euo pipefail
-          mkdir -p out && cd out
-          gh release download "${{ steps.qa.outputs.qa_tag }}" --repo "$GITHUB_REPOSITORY"
-          ls -l
-          for f in *.sha256; do sha256sum -c "$f"; done
-          # Same files, prod URLs and name.
-          python3 - <<PY
-          import json
-          p = 'os-list.json'
-          d = json.load(open(p))
-          for e in d['os_list']:
-              e['url'] = e['url'].replace('/releases/download/${{ steps.qa.outputs.qa_tag }}/', '/releases/download/v${VERSION}/')
-              e['name'] = e['name'].replace(' (QA)', '')
-          json.dump(d, open(p, 'w'), indent=2)
-          print(open(p).read())
-          PY
-
-      - name: Publish production release
-        id: published
-        uses: softprops/action-gh-release@v2
-        with:
-          name: FieldLink Kiosk ${{ env.VERSION }}
-          prerelease: false
-          make_latest: true
-          body: |
-            Raspberry Pi kiosk image `fieldlink-kiosk-${{ env.VERSION }}-arm64.img.xz` (Raspberry Pi OS Lite trixie, arm64, Pi 4 and Pi 5) and the kiosk app package. Same build as `${{ steps.qa.outputs.qa_tag }}`, promoted after testing.
-
-            **Flash it** with Raspberry Pi Imager → *Use custom*, or add this list as a repository: `https://github.com/${{ github.repository }}/releases/latest/download/os-list.json`.
-          files: |
-            out/*.img.xz
-            out/*.img.xz.sha256
-            out/os-list.json
-            out/*.deb
-            out/*.deb.sha256
-          fail_on_unmatched_files: true
+      # Same script as the "Promote to prod" workflow button (promote.yml);
+      # here the vX.Y.Z tag already exists (it triggered this run) and must sit
+      # on the same commit as the QA tag it promotes.
+      - name: Promote
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # The FieldLink production server caches which image build it hands out for an
-      # hour; this makes the new one show up on Admin → Kiosk at once. Both
-      # secrets are optional (the Windows kiosk repo uses the same pair).
-      - name: Tell the FieldLink production server about the new build
-        if: always() && steps.published.outcome == 'success'
-        env:
-          SERVER_URL: ${{ secrets.FIELDLINK_SERVER_URL }}
-          WEBHOOK_SECRET: ${{ secrets.KIOSK_WEBHOOK_SECRET }}
-        run: |
-          if [ -z "$SERVER_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then echo "FIELDLINK_SERVER_URL / KIOSK_WEBHOOK_SECRET not set; skipping cache invalidation"; exit 0; fi
-          curl -fsS -X POST "${SERVER_URL%/}/api/kiosk/installer/invalidate" -H "x-webhook-secret: $WEBHOOK_SECRET" -H 'Content-Type: application/json' \
-            && echo "FieldLink production server cache invalidated" || echo "::warning::cache invalidation skipped ($SERVER_URL did not accept it; the server refreshes within an hour anyway)"
-
-      - name: Publish the .deb to the apt-prod channel
-        if: hashFiles('app/debian/fieldlink-apt.public.asc') != ''
-        env:
-          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
           GH_TOKEN: ${{ github.token }}
-        run: scripts/publish-apt.sh prod out/*.deb
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: scripts/promote-release.sh "${{ needs.tag.outputs.version }}"

@@ -120,7 +120,7 @@ two per version, on the free arm64 runners:
 | Tag | What happens | Result |
 |---|---|---|
 | `vX.Y.Z-qa` | Builds the `.deb`, installs it on the runner, `ldd` + smoke test; builds the image with pi-gen (~10 min) | GitHub **pre-release** "FieldLink Kiosk X.Y.Z (QA)" with the `.img.xz`, checksum, `.deb` files and `os-list.json`. Flash this on the test Pi. |
-| `vX.Y.Z` | **No rebuild.** Finds the `vX.Y.Z-qa` release on the same commit, downloads and verifies its assets, points `os-list.json` at the prod URLs | GitHub release "FieldLink Kiosk X.Y.Z", marked *latest*: the download churches get. |
+| `vX.Y.Z` **or** Actions → *Promote to prod* (version) | **No rebuild.** Finds the `vX.Y.Z-qa` release, downloads and verifies its assets, points `os-list.json` at the prod URLs; the button also creates the `vX.Y.Z` tag on the QA commit | GitHub release "FieldLink Kiosk X.Y.Z", marked *latest*: the download churches get; `.deb` published to `apt-prod`. |
 
 `X.Y.Z` must equal `app/package.json`'s version, and the prod tag must point at the same commit as
 the QA tag (otherwise the workflow refuses, because the promoted image would not match the source).
@@ -142,10 +142,13 @@ Without them the step is skipped and the panel catches up within the hour.
 git fetch origin main
 git tag -a v0.2.0-qa origin/main -m "FieldLink Kiosk 0.2.0 QA"
 git push origin v0.2.0-qa
-# … flash-and-check on the Pi from the v0.2.0-qa pre-release, then:
+# … flash-and-check on the Pi from the v0.2.0-qa pre-release, then either
+# Actions → "Promote to prod" → version 0.2.0 (creates the tag for you), or:
 git tag -a v0.2.0 origin/main -m "FieldLink Kiosk 0.2.0"
 git push origin v0.2.0
 ```
+
+Both paths run `scripts/promote-release.sh`; the button is the normal way, the tag is the fallback.
 
 ### Raspberry Pi Imager
 

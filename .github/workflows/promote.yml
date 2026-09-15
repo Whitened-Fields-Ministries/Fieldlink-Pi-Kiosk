@@ -1,0 +1,50 @@
+name: Promote to prod
+
+# The button version of the vX.Y.Z tag: pick a version whose vX.Y.Z-qa build
+# has been tested on the Pi, and this creates the vX.Y.Z tag on that same
+# commit, republishes the QA assets as the production release (marked
+# latest) and publishes the .deb to the apt-prod channel. No rebuild.
+#
+# Same script as the tag-push path in release.yml (scripts/promote-release.sh),
+# so the two can never drift. A tag pushed by this workflow's token does not
+# trigger release.yml, which is why the promotion happens here directly.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to promote (X.Y.Z, e.g. 0.3.1). Its vX.Y.Z-qa release must exist.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.version }} to prod
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: scripts/promote-release.sh "${{ inputs.version }}" --create-tag
+
+      - name: Summary
+        run: |
+          {
+            echo "## FieldLink Kiosk ${{ inputs.version }} promoted to prod"
+            echo
+            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${{ inputs.version }}"
+            echo "- Imager list (latest prod): https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/os-list.json"
+          } >> "$GITHUB_STEP_SUMMARY"
