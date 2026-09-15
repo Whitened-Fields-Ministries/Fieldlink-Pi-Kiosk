@@ -33,6 +33,11 @@ case "$1" in
       sysctl -q -p /etc/sysctl.d/50-fieldlink-kiosk.conf >/dev/null 2>&1 || true
     fi
 
+    # Nightly updates: apt's timers exist on every Debian; make sure they run.
+    if [ -d /run/systemd/system ]; then
+      systemctl enable apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+    fi
+
     # The unit is enabled by the image build (and by hand on a stock Pi OS);
     # here we only reload systemd and restart a running display so the new
     # build is what is on screen.

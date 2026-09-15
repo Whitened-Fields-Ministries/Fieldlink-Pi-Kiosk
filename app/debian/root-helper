@@ -1,0 +1,100 @@
+#!/bin/sh
+# FieldLink kiosk root helper. The display app runs as the unprivileged kiosk
+# user; the few things that need root go through this script, which sudo lets
+# the kiosk user run without a password (see sudoers-fieldlink-kiosk). It is a
+# fixed menu, not a shell: every argument is validated here.
+#
+#   check-update          apt-get update, then print installed= / candidate=
+#   update                install the newer fieldlink-pi-kiosk. Runs in its own
+#                         transient systemd unit (the package's postinst restarts
+#                         the display, which would otherwise kill dpkg mid-way);
+#                         progress goes to /var/log/fieldlink-kiosk-update.log
+#   update-now            internal: the body of "update", run by that unit
+#   reboot                restart the Pi
+#   factory-reset         forget the pairing, the log and every saved Wi-Fi
+#                         network, then reboot
+#   logs                  last lines of the display's journal
+#   channel [qa|prod]     show or switch the update channel (apt source)
+set -eu
+export DEBIAN_FRONTEND=noninteractive LC_ALL=C
+PKG=fieldlink-pi-kiosk
+STATE=/var/lib/fieldlink-kiosk
+SOURCES=/etc/apt/sources.list.d/fieldlink.sources
+UPDATE_UNIT=fieldlink-kiosk-update
+UPDATE_LOG=/var/log/fieldlink-kiosk-update.log
+
+usage() { echo "usage: root-helper check-update|update|update-now|reboot|factory-reset|logs|channel [qa|prod]" >&2; exit 2; }
+[ "$(id -u)" = 0 ] || { echo "root-helper: must run as root (through sudo)" >&2; exit 1; }
+[ "$#" -ge 1 ] || usage
+
+apt_update() {
+  # A flaky network must not turn into a failed update: report and go on with the cached lists.
+  if ! apt-get update -qq 2>&1 | tail -n 5; then echo "warning: apt-get update failed; using cached package lists" >&2; fi
+}
+
+case "$1" in
+  check-update)
+    [ "$#" -eq 1 ] || usage
+    apt_update
+    apt-cache policy "$PKG" | awk '/Installed:/{print "installed=" $2} /Candidate:/{print "candidate=" $2}'
+    ;;
+  update)
+    [ "$#" -eq 1 ] || usage
+    if systemctl is-active --quiet "$UPDATE_UNIT" 2>/dev/null; then echo "already running"; exit 0; fi
+    : > "$UPDATE_LOG"; chmod 0644 "$UPDATE_LOG"
+    systemd-run --unit="$UPDATE_UNIT" --collect --quiet --no-block \
+      --property=Type=oneshot \
+      --property="StandardOutput=append:$UPDATE_LOG" --property="StandardError=append:$UPDATE_LOG" \
+      /usr/lib/fieldlink-kiosk/root-helper update-now
+    echo "started"
+    ;;
+  update-now)
+    [ "$#" -eq 1 ] || usage
+    # Only from the transient unit above, never straight from the display's
+    # own cgroup (a service restart would take the install down with it).
+    [ -n "${INVOCATION_ID:-}" ] || { echo "update-now: run through 'root-helper update'" >&2; exit 1; }
+    apt_update
+    echo "installing the newest $PKG…"
+    if apt-get install -y --only-upgrade \
+         -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$PKG" 2>&1; then
+      echo "done: $(dpkg-query -W -f='${Version}' "$PKG")"
+    else
+      echo "failed: apt-get exited $?"
+      exit 1
+    fi
+    ;;
+  reboot)
+    [ "$#" -eq 1 ] || usage
+    echo "rebooting"
+    systemctl reboot
+    ;;
+  factory-reset)
+    [ "$#" -eq 1 ] || usage
+    echo "forgetting saved Wi-Fi networks"
+    nmcli -t -f NAME,TYPE con show 2>/dev/null | awk -F: '$2=="802-11-wireless"{print $1}' | while IFS= read -r name; do
+      nmcli con delete "$name" >/dev/null 2>&1 || true
+    done
+    echo "clearing $STATE"
+    find "$STATE" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+    sync
+    echo "rebooting"
+    systemctl reboot
+    ;;
+  logs)
+    [ "$#" -eq 1 ] || usage
+    journalctl -u fieldlink-kiosk -n 150 --no-pager -o short-iso 2>&1 || true
+    ;;
+  channel)
+    [ -f "$SOURCES" ] || { echo "channel=none"; echo "note: no update source configured in this build" >&2; exit 0; }
+    if [ "$#" -eq 1 ]; then
+      sed -n 's|^URIs:.*/releases/download/apt-\([a-z]*\)/.*|channel=\1|p' "$SOURCES"
+      exit 0
+    fi
+    [ "$#" -eq 2 ] || usage
+    case "$2" in
+      qa|prod) sed -i "s|/releases/download/apt-[a-z]*/|/releases/download/apt-$2/|" "$SOURCES"; echo "channel=$2"; apt_update ;;
+      *) usage ;;
+    esac
+    ;;
+  *) usage ;;
+esac

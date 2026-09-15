@@ -42,7 +42,8 @@ test -x "$APP_SRC/$NAME"
 echo "==> assembling package tree"
 install -d "$ROOT/DEBIAN" "$ROOT/opt" "$ROOT/usr/bin" "$ROOT/usr/lib/systemd/system" \
   "$ROOT/etc/pam.d" "$ROOT/etc/polkit-1/rules.d" "$ROOT/etc/NetworkManager/dnsmasq-shared.d" \
-  "$ROOT/etc/sysctl.d" "$ROOT/usr/share/doc/$NAME"
+  "$ROOT/etc/sysctl.d" "$ROOT/usr/lib/fieldlink-kiosk" "$ROOT/etc/sudoers.d" "$ROOT/etc/apt/apt.conf.d" \
+  "$ROOT/etc/apt/sources.list.d" "$ROOT/etc/apt/keyrings" "$ROOT/usr/share/doc/$NAME"
 cp -a "$APP_SRC" "$ROOT/opt/$NAME"
 # packager leaves its output directory 0700; the app runs as the kiosk user.
 chmod 0755 "$ROOT/opt/$NAME"
@@ -54,10 +55,28 @@ install -m 0644 debian/pam.d-fieldlink-kiosk "$ROOT/etc/pam.d/fieldlink-kiosk"
 install -m 0644 debian/polkit-fieldlink-kiosk.rules "$ROOT/etc/polkit-1/rules.d/50-fieldlink-kiosk.rules"
 install -m 0644 debian/dnsmasq-shared-fieldlink.conf "$ROOT/etc/NetworkManager/dnsmasq-shared.d/fieldlink-kiosk.conf"
 install -m 0644 debian/sysctl-fieldlink-kiosk.conf "$ROOT/etc/sysctl.d/50-fieldlink-kiosk.conf"
+install -m 0755 debian/root-helper "$ROOT/usr/lib/fieldlink-kiosk/root-helper"
+install -m 0440 debian/sudoers-fieldlink-kiosk "$ROOT/etc/sudoers.d/fieldlink-kiosk"
+install -m 0644 debian/apt-52fieldlink-kiosk "$ROOT/etc/apt/apt.conf.d/52fieldlink-kiosk"
+CONFFILES=(/etc/pam.d/fieldlink-kiosk /etc/polkit-1/rules.d/50-fieldlink-kiosk.rules
+  /etc/NetworkManager/dnsmasq-shared.d/fieldlink-kiosk.conf /etc/sysctl.d/50-fieldlink-kiosk.conf
+  /etc/sudoers.d/fieldlink-kiosk /etc/apt/apt.conf.d/52fieldlink-kiosk)
+# The update channel needs the repository's public key, which only exists once
+# the person has generated it (docs/apt-signing.md). Without it the package
+# installs and runs, but never updates itself.
+if [ -f debian/fieldlink-apt.public.asc ]; then
+  gpg --batch --yes --dearmor --output "$ROOT/etc/apt/keyrings/fieldlink-apt.gpg" debian/fieldlink-apt.public.asc
+  chmod 0644 "$ROOT/etc/apt/keyrings/fieldlink-apt.gpg"
+  install -m 0644 debian/fieldlink.sources "$ROOT/etc/apt/sources.list.d/fieldlink.sources"
+  CONFFILES+=(/etc/apt/sources.list.d/fieldlink.sources)
+  echo "==> update channel included (debian/fieldlink-apt.public.asc)"
+else
+  rmdir "$ROOT/etc/apt/keyrings" "$ROOT/etc/apt/sources.list.d" 2>/dev/null || true
+  echo "==> WARNING: debian/fieldlink-apt.public.asc missing — package built WITHOUT an update channel"
+fi
 install -m 0644 debian/copyright "$ROOT/usr/share/doc/$NAME/copyright"
 install -m 0755 debian/postinst debian/prerm debian/postrm "$ROOT/DEBIAN/"
-printf '%s\n' /etc/pam.d/fieldlink-kiosk /etc/polkit-1/rules.d/50-fieldlink-kiosk.rules \
-  /etc/NetworkManager/dnsmasq-shared.d/fieldlink-kiosk.conf /etc/sysctl.d/50-fieldlink-kiosk.conf > "$ROOT/DEBIAN/conffiles"
+printf '%s\n' "${CONFFILES[@]}" > "$ROOT/DEBIAN/conffiles"
 
 SIZE_KB="$(du -sk --apparent-size "$ROOT" --exclude=DEBIAN | cut -f1)"
 sed -e "s/@VERSION@/$VERSION/" -e "s/@ARCH@/$ARCH/" -e "s/@SIZE@/$SIZE_KB/" debian/control.in > "$ROOT/DEBIAN/control"

@@ -1,0 +1,7 @@
+# FieldLink kiosk update channel. A signed flat apt repository published as the
+# assets of the "apt-prod" GitHub release; "apt-qa" is the test channel
+# (root-helper channel qa|prod switches). Key: /etc/apt/keyrings/fieldlink-apt.gpg
+Types: deb
+URIs: https://github.com/Whitened-Fields-Ministries/Fieldlink-Pi-Kiosk/releases/download/apt-prod/
+Suites: ./
+Signed-By: /etc/apt/keyrings/fieldlink-apt.gpg

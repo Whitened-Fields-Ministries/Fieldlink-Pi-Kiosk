@@ -38,7 +38,7 @@ gpg --armor --export "$KEYID"             > fieldlink-apt.public.asc
 | Half | Where | Name |
 |---|---|---|
 | `fieldlink-apt-signing.private.asc` | Fieldlink-Pi-Kiosk → Settings → Secrets and variables → Actions → *New repository secret* (paste the whole armored file) | `APT_SIGNING_KEY` |
-| `fieldlink-apt.public.asc` | committed to this repo as `image/apt/fieldlink-apt.public.asc` (milestone 3 adds the file and installs it into `/etc/apt/keyrings/` in the image) | — |
+| `fieldlink-apt.public.asc` | committed to this repo as **`app/debian/fieldlink-apt.public.asc`** (the package build dearmors it into `/etc/apt/keyrings/fieldlink-apt.gpg` and adds the apt source; without the file the package has no update channel) | — |
 
 Then delete the private file and the scratch keyring:
 
@@ -52,11 +52,18 @@ password manager entry is fine). If it is lost, every deployed Pi has to be
 re-flashed to trust a new key; if it leaks, rotate it the same way and
 re-flash.
 
-## What milestone 3 will do with it
+## What the pipeline does with it
 
-The release workflow imports `APT_SIGNING_KEY` into a temporary keyring, runs
-`reprepro` (or `apt-ftparchive` + `gpg --clearsign`) over the built `.deb`
-files, and publishes the repository to GitHub Pages of this repo. The image
-carries the public key and a `sources.list.d` entry pointing at that URL, and
-`unattended-upgrades` is configured to take updates from it and from Debian
-security. Nothing about the key itself changes between now and then.
+`scripts/apt-repo.sh` imports `APT_SIGNING_KEY` into a temporary keyring, builds a
+signed *flat* apt repository (`Packages`, `Release`, `InRelease`, the `.deb` files) and
+`scripts/publish-apt.sh` uploads it as the assets of the `apt-qa` release (on a
+`vX.Y.Z-qa` tag) or `apt-prod` (on the `vX.Y.Z` promotion). Kiosks read
+`https://github.com/<owner>/<repo>/releases/download/apt-prod/` through
+`/etc/apt/sources.list.d/fieldlink.sources`, trust only this key, and
+`unattended-upgrades` installs new builds overnight (plus Debian security fixes).
+The settings screen can check and install on demand and switch a bench Pi to the
+`qa` channel.
+
+Rotating the key means: new key pair, replace `app/debian/fieldlink-apt.public.asc` and
+the secret, ship one release signed with the **old** key that carries the new public key
+in the package (kiosks install it), then switch the pipeline to the new key.

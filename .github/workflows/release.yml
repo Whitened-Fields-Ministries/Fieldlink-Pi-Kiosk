@@ -12,6 +12,13 @@ name: Release
 #                 the prod URLs and publishes them as the *latest* release —
 #                 the one FieldLink offers for download.
 #
+# Both also publish the .deb to the matching apt channel (the "apt-qa" /
+# "apt-prod" releases hold a signed flat apt repository that deployed kiosks
+# update from overnight), once the signing key exists: the public half is
+# committed as app/debian/fieldlink-apt.public.asc and the private half is the
+# APT_SIGNING_KEY secret (docs/apt-signing.md). Without the public key file
+# the packages are built without an update channel and this step is skipped.
+#
 # X.Y.Z must equal app/package.json, and the prod tag must point at the same
 # commit as the QA tag it promotes. Both jobs run on the free arm64 runners.
 
@@ -237,6 +244,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Publish the .deb to the apt-qa channel
+        if: hashFiles('app/debian/fieldlink-apt.public.asc') != ''
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/publish-apt.sh qa out/*.deb
+
   promote:
     name: Prod · promote the QA release
     needs: tag
@@ -304,3 +318,10 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the .deb to the apt-prod channel
+        if: hashFiles('app/debian/fieldlink-apt.public.asc') != ''
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/publish-apt.sh prod out/*.deb
