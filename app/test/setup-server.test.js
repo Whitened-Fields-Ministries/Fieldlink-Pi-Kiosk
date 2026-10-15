@@ -90,3 +90,54 @@ test('stop closes the listener', async () => {
   assert.equal(srv.running, false);
   await assert.rejects(request(addr.port, 'GET', '/'));
 });
+
+// ── Only the setup page itself may use the API ───────────────────────────────
+// While the hotspot is up every name resolves to the Pi, so a page the phone
+// had open for some other site would also reach this server; its Host header
+// (and, for a cross-origin fetch, its Origin) names that other site.
+test('API refuses requests whose Host is not the setup address', () => withServer(async (port, backend) => {
+  for (const p of ['/api/networks', '/api/status']) {
+    const r = await request(port, 'GET', p, null, { Host: 'www.example.com' });
+    assert.equal(r.status, 403, p);
+  }
+  const r = await request(port, 'POST', '/api/connect', JSON.stringify({ ssid: 'ChurchWifi', password: 'correct horse' }), { Host: 'captive.apple.com' });
+  assert.equal(r.status, 403);
+  assert.equal(backend.calls.filter(c => c !== 'touch').length, 0, 'no connect attempted');
+}));
+
+test('API refuses a cross-origin fetch but accepts its own origin', () => withServer(async (port, backend) => {
+  const bad = await request(port, 'POST', '/api/connect', JSON.stringify({ ssid: 'ChurchWifi', password: 'correct horse' }), { Origin: 'http://evil.example' });
+  assert.equal(bad.status, 403);
+  const good = await request(port, 'POST', '/api/connect', JSON.stringify({ ssid: 'ChurchWifi', password: 'correct horse' }), { Origin: `http://127.0.0.1:${port}` });
+  assert.equal(good.status, 200);
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(backend.calls.filter(c => c !== 'touch'), [{ ssid: 'ChurchWifi', password: 'correct horse' }]);
+}));
+
+test('connect needs a JSON content type (no simple cross-site form posts)', () => withServer(async (port, backend) => {
+  const r = await request(port, 'POST', '/api/connect', JSON.stringify({ ssid: 'ChurchWifi', password: 'correct horse' }), { 'Content-Type': 'text/plain' });
+  assert.equal(r.status, 415);
+  assert.equal(backend.calls.filter(c => c !== 'touch').length, 0);
+}));
+
+test('the page itself redirects to the setup address when reached under another name', () => withServer(async port => {
+  const r = await request(port, 'GET', '/', null, { Host: 'neverssl.com' });
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.location, 'http://10.42.0.1/');
+  const ok = await request(port, 'GET', '/');
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers['content-security-policy'], /default-src 'none'/);
+}));
+
+test('hostAllowed and originAllowed', () => {
+  const { hostAllowed, originAllowed } = require('../setup-server');
+  assert.equal(hostAllowed('10.42.0.1', ['10.42.0.1']), true);
+  assert.equal(hostAllowed('10.42.0.1:80', ['10.42.0.1']), true);
+  assert.equal(hostAllowed('10.42.0.1.evil.example', ['10.42.0.1']), false);
+  assert.equal(hostAllowed(undefined, ['10.42.0.1']), false);
+  assert.equal(originAllowed(undefined, ['10.42.0.1']), true);
+  assert.equal(originAllowed('http://10.42.0.1', ['10.42.0.1']), true);
+  assert.equal(originAllowed('https://10.42.0.1', ['10.42.0.1']), false);
+  assert.equal(originAllowed('null', ['10.42.0.1']), false);
+  assert.equal(originAllowed('http://evil.example', ['10.42.0.1']), false);
+});

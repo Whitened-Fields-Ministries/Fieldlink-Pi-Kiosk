@@ -146,12 +146,35 @@ function saveConfig(patch) {
   throw new Error(`Could not save config anywhere (${lastErr ? lastErr.message : 'unknown error'})`);
 }
 
+// The FieldLink servers. A display can be pointed at another server (QA, a
+// self-hosted FieldLink) from the staff-only server field; see originAllowed.
+const TRUSTED_ORIGINS    = new Set([DEFAULT_SERVER, SERVER_ALIASES.qa]);
+
+// The kiosk key travels in a header and in the page URL, so the server must be
+// reached over TLS; plain http is only for a developer's own machine.
+function allowedProtocol(u) {
+  if (u.protocol === 'https:') return true;
+  return u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+}
+
 function parseKioskUrl(kioskUrl) {
   try {
     const u = new URL(kioskUrl);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+    if (!allowedProtocol(u)) return null;
     return { url: u.toString(), origin: u.origin, key: u.searchParams.get('key') || '' };
   } catch { return null; }
+}
+
+// Origins this display may be linked to from its own screen: the FieldLink
+// servers, the server it is already on, and the one typed into the staff-only
+// server field (which is what starts a pairing request there). Anyone in the
+// lobby can reach the settings screen (corner hold), so a pasted URL must not
+// be able to point the display at an arbitrary site.
+function originAllowed(origin) {
+  if (TRUSTED_ORIGINS.has(origin)) return true;
+  const current = kioskUrl ? parseKioskUrl(kioskUrl) : null;
+  if (current && current.origin === origin) return true;
+  return !!(pair && pair.origin === origin);
 }
 
 // Accepts a full kiosk URL or a bare key; returns a normalised kiosk URL.
@@ -164,11 +187,11 @@ function normaliseKioskInput(text, fallbackOrigin) {
   }
   const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;
   const parsed = parseKioskUrl(withScheme);
-  if (!parsed) throw new Error('That is not a valid web address.');
+  if (!parsed) throw new Error('That is not a valid web address (the server must use https).');
   if (!parsed.key) throw new Error('That address has no ?key=… part. Copy the full kiosk URL from FieldLink Admin → Kiosk.');
   if (!KEY_RE.test(parsed.key)) throw new Error('The key in that address does not look like a FieldLink kiosk key.');
   const moved = LEGACY_ORIGINS[parsed.origin];
-  return moved ? `${moved}/kiosk?key=${parsed.key}` : parsed.url;
+  return moved ? `${moved}/kiosk?key=${parsed.key}` : `${parsed.origin}/kiosk?key=${parsed.key}`;
 }
 
 function normaliseOrigin(text) {
@@ -178,7 +201,7 @@ function normaliseOrigin(text) {
   if (alias) return alias;
   const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;
   const u = new URL(withScheme);
-  if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('Server must be an http(s) address.');
+  if (!allowedProtocol(u)) throw new Error('Server must be an https address.');
   return u.origin;
 }
 
@@ -863,6 +886,8 @@ ipcMain.handle('kiosk:set-url', async (_e, { text, server } = {}) => {
   try {
     const current = kioskUrl ? parseKioskUrl(kioskUrl) : null;
     const url = normaliseKioskInput(text, server || (current && current.origin));
+    const origin = parseKioskUrl(url).origin;
+    if (!originAllowed(origin)) return { ok: false, error: `${origin} is not a FieldLink server this display knows. To use another server, press Ctrl+Shift+S, enter it in the FieldLink server field and click "Use this server" first.` };
     const check = await checkKey(url);
     if (check.status === 'invalid') return { ok: false, error: 'The server rejected that key. Copy the URL again from FieldLink Admin → Kiosk → ⚙ Settings → Copy URL.' };
     // Offline/server errors: save anyway — the health loop will bring the page up when the server is reachable.
@@ -963,8 +988,9 @@ async function pollPairRequest() {
     if (pair !== p) return;
     if (r.ok && r.body && r.body.status === 'linked' && r.body.url) {
       const parsed = parseKioskUrl(r.body.url);
-      if (parsed && parsed.key) {
-        const saved = saveConfig({ kioskUrl: parsed.url });
+      // The server we asked may only link us to itself (a legacy host moves to its app. host).
+      if (parsed && parsed.key && KEY_RE.test(parsed.key) && (parsed.origin === p.origin || LEGACY_ORIGINS[parsed.origin] === p.origin)) {
+        const saved = saveConfig({ kioskUrl: `${p.origin}/kiosk?key=${parsed.key}` });
         keyInfo = r.body.key || null; kioskUrl = parsed.url; configSource = saved; invalidStreak = 0;
         log(`pair-request: linked as "${(r.body.key && r.body.key.name) || '?'}" — saved to ${saved}`);
         stopPairRequest();
@@ -1039,13 +1065,28 @@ function createWindow() {
 
   win.webContents.on('before-input-event', (e, input) => { if (handleShortcut(input)) e.preventDefault(); });
 
-  // Stay on the kiosk's own server (or our local recovery page).
+  // Stay on the kiosk's own server (or our local recovery page). Compare whole
+  // origins: a prefix test would let "https://app.example.com.evil.net" through.
   win.webContents.on('will-navigate', (e, url) => {
-    if (url.startsWith('file:')) return;
+    let target = null;
+    try { target = new URL(url); } catch {}
+    if (target && target.protocol === 'file:' && target.pathname.endsWith('/recovery.html')) return;
     const p = kioskUrl ? parseKioskUrl(kioskUrl) : null;
-    if (!p || !url.startsWith(p.origin)) { log(`blocked navigation to ${url}`); e.preventDefault(); }
+    if (!p || !target || target.origin !== p.origin) { log(`blocked navigation to ${url}`); e.preventDefault(); }
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  // The kiosk page is a map with newsletters and videos: it has no business with
+  // the camera, microphone, location, notifications, clipboard or anything else
+  // Chromium would otherwise grant to a page that asks (Electron allows every
+  // permission request by default).
+  const ses = win.webContents.session;
+  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+    const ok = permission === 'fullscreen';
+    if (!ok) log(`page: denied permission request "${permission}"`);
+    callback(ok);
+  });
+  ses.setPermissionCheckHandler((_wc, permission) => permission === 'fullscreen');
 
   // Network down at boot, DNS failure, connection refused…
   win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
