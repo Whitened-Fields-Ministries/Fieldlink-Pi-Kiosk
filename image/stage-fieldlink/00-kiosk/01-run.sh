@@ -29,6 +29,19 @@ systemctl mask userconfig.service
 rm -f /etc/xdg/autostart/piwiz.desktop
 EOF
 
+# SSH accepts keys only. The image is public and identical for every church, so
+# the first user's password (random per build, thrown away) must never be a way
+# in; a key added through Imager's OS customisation (authorized_keys) still works.
+# A drop-in rather than editing sshd_config, so a package upgrade never undoes it.
+install -d -m 755 "${ROOTFS_DIR}/etc/ssh/sshd_config.d"
+cat > "${ROOTFS_DIR}/etc/ssh/sshd_config.d/10-fieldlink-kiosk.conf" << 'EOT'
+# FieldLink kiosk: keys only (see the repository README, "Security notes").
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+EOT
+chmod 644 "${ROOTFS_DIR}/etc/ssh/sshd_config.d/10-fieldlink-kiosk.conf"
+
 # Version marker for the recovery screen and support.
 echo "fieldlink-kiosk-image ${FIELDLINK_IMAGE_VERSION:-dev} $(basename "${DEB}")" > "${ROOTFS_DIR}/etc/fieldlink-kiosk-image"
 

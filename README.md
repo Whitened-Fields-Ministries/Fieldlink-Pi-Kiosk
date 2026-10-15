@@ -249,8 +249,10 @@ presentation mode, anything printed to the TV before cage takes over, and for Wi
   `Origin` is another site), requires JSON for `/api/connect`, and serves the page with a strict CSP.
   Otherwise any web page the phone had open could read the network list or change the display's Wi‑Fi.
   Joining the hotspot still needs the password shown on the TV.
-- **SSH takes keys only** (`pubkey-only-ssh` in the image build): the first user's random password is
-  thrown away and must never be a way in. Add a key through Imager's OS customisation when needed.
+- **SSH takes keys only**: the image stage installs an sshd drop-in (`/etc/ssh/sshd_config.d/10-fieldlink-kiosk.conf`,
+  `PasswordAuthentication no`), because the first user's random password is thrown away and must
+  never be a way in. Add a key through Imager's OS customisation when needed. (pi-gen's own
+  `PUBKEY_ONLY_SSH` is not used: it requires a key baked into the image, and this image ships without one.)
 - **Electron is kept current** (Dependabot, weekly) because the kiosk renders web content, including
   newsletters and videos uploaded by churches. Bump and release when a new Electron line ships. Actions
   in the workflows are pinned to commits, and `workflow_dispatch` inputs reach shell steps through the

@@ -160,11 +160,13 @@ jobs:
           username: fieldlink
           password: ${{ steps.pw.outputs.pw }}
           disable-first-boot-user-rename: 1
-          # sshd accepts keys only (image/config PUBKEY_ONLY_SSH=1 for local builds):
-          # the throwaway password above must never be a way in, and a key added
-          # through Imager's OS customisation still works.
+          # sshd is on, but accepts keys only: the stage writes an sshd drop-in that
+          # turns password login off (image/stage-fieldlink/00-kiosk/01-run.sh), so the
+          # throwaway password above is never a way in, and a key added through Imager's
+          # OS customisation still works. pi-gen's own pubkey-only-ssh switch is not
+          # used: it insists on a key being baked in (PUBKEY_SSH_FIRST_USER), and this
+          # image is built for every church without one.
           enable-ssh: 1
-          pubkey-only-ssh: 1
           # No cloud-init: on first boot it creates its default user "pi", and
           # Raspberry Pi's cloud-init hook then runs rename-user, which enables
           # the first-boot wizard (keyboard dialog + username prompt) on the TV.
