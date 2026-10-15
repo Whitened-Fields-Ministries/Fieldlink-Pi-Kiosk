@@ -150,24 +150,47 @@ function validate(ssid, password) {
   return null;
 }
 
-function createSetupServer({ backend, log = () => {} }) {
+// The API answers only when the browser is really talking to the setup page:
+// a request whose Host header names another site is a page the phone had open
+// elsewhere (every name resolves to the Pi while the hotspot is up) or a DNS
+// rebinding attempt, and a cross-origin fetch from such a page carries an Origin
+// header that is not ours. Accepting them would let any web page the phone
+// visits read the network list or change the display's Wi-Fi.
+function hostAllowed(host, allowedHosts) {
+  const h = String(host || '').trim().toLowerCase().replace(/:80$/, '');
+  return allowedHosts.includes(h);
+}
+function originAllowed(origin, allowedHosts) {
+  if (origin == null) return true;                // same-origin navigations and fetches without an Origin header
+  try { const u = new URL(String(origin)); return u.protocol === 'http:' && hostAllowed(u.host, allowedHosts); } catch { return false; }
+}
+
+function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
   let server = null; let connecting = false;
   const setupUrl = `http://${HOTSPOT_ADDR}/`;
+  let hosts = allowedHosts ? allowedHosts.map(h => String(h).toLowerCase()) : [HOTSPOT_ADDR];
 
   async function handle(req, res) {
     const url = new URL(req.url, setupUrl);
     const path = url.pathname;
     const send = (code, body, type = 'text/html; charset=utf-8', headers = {}) => {
-      res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body), ...headers });
+      res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body), 'X-Content-Type-Options': 'nosniff', ...headers });
       res.end(body);
     };
     const json = (code, obj) => send(code, JSON.stringify(obj), 'application/json; charset=utf-8');
     try { backend.touch && backend.touch(); } catch {}
 
-    if (req.method === 'GET' && (path === '/' || path === '/index.html')) return send(200, page(await backend.getStatus()));
+    const ours = hostAllowed(req.headers.host, hosts) && originAllowed(req.headers.origin, hosts);
+    if (path.startsWith('/api/') && !ours) return json(403, { ok: false, error: 'Open http://10.42.0.1/ on the setup network.' });
+
+    if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
+      if (!hostAllowed(req.headers.host, hosts)) return send(302, `<a href="${setupUrl}">FieldLink display setup</a>`, 'text/html; charset=utf-8', { Location: setupUrl });
+      return send(200, page(await backend.getStatus()), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'" });
+    }
     if (req.method === 'GET' && path === '/api/networks') return json(200, await backend.getNetworks());
     if (req.method === 'GET' && path === '/api/status') return json(200, await backend.getStatus());
     if (req.method === 'POST' && path === '/api/connect') {
+      if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return json(415, { ok: false, error: 'Expected JSON.' });
       let body;
       try { body = await readJson(req, MAX_BODY); } catch (e) { return json(400, { ok: false, error: e.message }); }
       const err = validate(body.ssid, body.password);
@@ -193,8 +216,15 @@ function createSetupServer({ backend, log = () => {} }) {
         if (server) return resolve(server.address());
         server = http.createServer((req, res) => { handle(req, res).catch(e => { log(`setup-server: ${e && e.stack || e}`); try { res.writeHead(500); res.end('error'); } catch {} }); });
         server.keepAliveTimeout = 5000;
+        server.requestTimeout = 30 * 1000;
+        server.headersTimeout = 10 * 1000;
         server.once('error', e => { server = null; reject(e); });
-        server.listen(port, host, () => { log(`setup-server: listening on http://${host}:${port}/`); resolve(server.address()); });
+        server.listen(port, host, () => {
+          const a = server.address();
+          // Tests listen on an ephemeral port of 127.0.0.1; accept that address too.
+          if (!allowedHosts) hosts = [...new Set([HOTSPOT_ADDR, `${host}${a.port === 80 ? '' : ':' + a.port}`.toLowerCase()])];
+          log(`setup-server: listening on http://${host}:${port}/`); resolve(a);
+        });
       });
     },
     stop() {
@@ -209,4 +239,4 @@ function createSetupServer({ backend, log = () => {} }) {
   };
 }
 
-module.exports = { createSetupServer, page, validate };
+module.exports = { createSetupServer, page, validate, hostAllowed, originAllowed };

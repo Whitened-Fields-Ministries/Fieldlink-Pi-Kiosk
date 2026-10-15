@@ -230,6 +230,32 @@ Things worth writing down for the PR: how long from power to code, whether the T
 presentation mode, anything printed to the TV before cage takes over, and for Wi‑Fi which phone
 (iOS/Android version) opened the setup page by itself.
 
+## Security notes
+
+- **Root is a fixed menu.** The display runs as the unprivileged `kiosk` user; the only way to root is
+  `/usr/lib/fieldlink-kiosk/root-helper` through one sudoers line, and every subcommand validates its
+  arguments. Packages come from the signed apt channel only (once `app/debian/fieldlink-apt.public.asc`
+  exists; until then the image has no update channel at all).
+- **The window stays on its server.** Navigation is allowed only to the kiosk URL's exact origin (not a
+  prefix match) or the local recovery page; new windows are denied; every Chromium permission request
+  (camera, microphone, location, notifications, …) is denied except fullscreen. Servers must use https
+  (plain http only for `localhost`).
+- **Re-linking from the screen is limited to known servers.** Anyone in the lobby can reach the settings
+  screen (corner hold), so a pasted kiosk URL is accepted only for the FieldLink servers, the server the
+  display is already on, or the one entered in the staff-only server field (Ctrl+Shift+S). A pairing poll
+  only accepts a kiosk URL on the server that was asked.
+- **The phone setup page answers only the phone that is on it.** While the hotspot is up every name
+  resolves to the Pi, so `setup-server.js` refuses API calls whose `Host` is not `10.42.0.1` (or whose
+  `Origin` is another site), requires JSON for `/api/connect`, and serves the page with a strict CSP.
+  Otherwise any web page the phone had open could read the network list or change the display's Wi‑Fi.
+  Joining the hotspot still needs the password shown on the TV.
+- **SSH takes keys only** (`pubkey-only-ssh` in the image build): the first user's random password is
+  thrown away and must never be a way in. Add a key through Imager's OS customisation when needed.
+- **Electron is kept current** (Dependabot, weekly) because the kiosk renders web content, including
+  newsletters and videos uploaded by churches. Bump and release when a new Electron line ships. Actions
+  in the workflows are pinned to commits, and `workflow_dispatch` inputs reach shell steps through the
+  environment, never by substitution into the script text.
+
 ## Development
 
 ```bash

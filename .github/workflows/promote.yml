@@ -31,22 +31,27 @@ jobs:
     name: Promote ${{ inputs.version }} to prod
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           fetch-tags: true
 
+      # The input reaches the shell through the environment, never by
+      # expression substitution into the script text.
       - name: Promote
         env:
           GH_TOKEN: ${{ github.token }}
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
-        run: scripts/promote-release.sh "${{ inputs.version }}" --create-tag
+          VERSION: ${{ inputs.version }}
+        run: scripts/promote-release.sh "$VERSION" --create-tag
 
       - name: Summary
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           {
-            echo "## FieldLink Kiosk ${{ inputs.version }} promoted to prod"
+            echo "## FieldLink Kiosk ${VERSION} promoted to prod"
             echo
-            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${{ inputs.version }}"
+            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}"
             echo "- Imager list (latest prod): https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/os-list.json"
           } >> "$GITHUB_STEP_SUMMARY"
