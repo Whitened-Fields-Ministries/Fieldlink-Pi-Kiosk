@@ -32,8 +32,17 @@ usage() { echo "usage: root-helper check-update|update|update-now|reboot|factory
 [ "$#" -ge 1 ] || usage
 
 apt_update() {
-  # A flaky network must not turn into a failed update: report and go on with the cached lists.
-  if ! apt-get update -qq 2>&1 | tail -n 5; then echo "warning: apt-get update failed; using cached package lists" >&2; fi
+  # Only the kiosk's own channel: a couple of seconds, where refreshing Debian
+  # and Raspberry Pi as well takes most of a minute on an SD card. Those lists
+  # are refreshed by apt's own daily timer, which is what the nightly system
+  # update reads. A flaky network must not turn into a failed update: report
+  # and go on with the cached lists.
+  if [ -f "$SOURCES" ]; then
+    set -- -o "Dir::Etc::sourcelist=$SOURCES" -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+  else
+    set --
+  fi
+  if ! apt-get update -qq "$@" 2>&1 | tail -n 5; then echo "warning: apt-get update failed; using cached package lists" >&2; fi
 }
 
 case "$1" in

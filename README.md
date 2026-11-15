@@ -175,7 +175,7 @@ two per version, on the free arm64 runners:
 
 | Tag | What happens | Result |
 |---|---|---|
-| `vX.Y.Z-qa` | Builds the `.deb`, installs it on the runner, `ldd` + smoke test; builds the image with pi-gen (~10 min) | GitHub **pre-release** "FieldLink Kiosk X.Y.Z (QA)" with the `.img.xz`, checksum, `.deb` files and `os-list.json`. Flash this on the test Pi. |
+| `vX.Y.Z-qa` | Builds the `.deb`, installs it on the runner, `ldd` + smoke test (~2 min); then, side by side, publishes it to the `apt-qa` channel (displays on `qa` can install it about 3 min after the tag) and builds the image with pi-gen (~10 min) | GitHub **pre-release** "FieldLink Kiosk X.Y.Z (QA)" with the `.img.xz`, checksum, `.deb` files and `os-list.json`. Flash this on the test Pi. |
 | `vX.Y.Z` **or** Actions → *Promote to prod* (version) | **No rebuild.** Finds the `vX.Y.Z-qa` release, downloads and verifies its assets, points `os-list.json` at the prod URLs; the button also creates the `vX.Y.Z` tag on the QA commit | GitHub release "FieldLink Kiosk X.Y.Z", marked *latest*: the download churches get; `.deb` published to `apt-prod`. |
 
 `X.Y.Z` must equal `app/package.json`'s version, and the prod tag must point at the same commit as
