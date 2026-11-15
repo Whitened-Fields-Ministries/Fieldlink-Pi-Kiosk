@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Read an update channel the way a kiosk does, without touching this machine's apt.
 #
-#   scripts/verify-apt-channel.sh <qa|prod|base-url> <expected-version> [arch] [public-key.asc]
+#   scripts/verify-apt-channel.sh <qa|prod|base-url> <expected-version|none> [arch] [public-key.asc]
 #
 # Builds a private apt root from the package's own source entry
 # (app/debian/fieldlink.sources) and public key, then proves that
@@ -9,7 +9,8 @@
 #   - fieldlink-pi-kiosk's candidate is <expected-version>, from origin FieldLink
 #     (the origin unattended-upgrades is allowed to install from),
 #   - the .deb downloads and matches the hash in the signed index.
-# The release workflow runs it against GitHub right after publishing a channel;
+# With "none" as the version the channel must be readable and offer nothing yet
+# (a channel before its first release). The release workflow runs it against GitHub right after publishing a channel;
 # scripts/test-apt-channel.sh runs it against a throwaway repository on localhost.
 set -euo pipefail
 
@@ -45,6 +46,11 @@ apt-get "${APT[@]}" update || die "apt-get update did not accept the channel at 
 policy="$(apt-cache "${APT[@]}" policy "$PKG")"
 echo "$policy"
 got="$(awk '/Candidate:/{print $2}' <<<"$policy")"
+if [ "$WANT" = none ]; then
+  [ -z "$got" ] || [ "$got" = "(none)" ] || die "the channel offers $PKG $got, expected an empty channel"
+  echo "==> $WHERE is readable and signed; no $PKG in it yet"
+  exit 0
+fi
 [ "$got" = "$WANT" ] || die "the channel offers $PKG ${got:-nothing} for $ARCH, expected $WANT"
 apt-cache "${APT[@]}" policy | grep -q 'o=FieldLink' || die "the channel's Release file does not say Origin: FieldLink; unattended-upgrades would ignore it"
 ( cd "$T/dl" && apt-get "${APT[@]}" download "$PKG" ) || die "the .deb did not download or does not match the signed index"

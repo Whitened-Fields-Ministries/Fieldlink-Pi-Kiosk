@@ -137,6 +137,18 @@ jobs:
           echo "::add-mask::$pw"
           echo "pw=$pw" >> "$GITHUB_OUTPUT"
 
+      # Every package points at apt-prod from its first boot, and pi-gen runs
+      # apt-get update inside the image: a channel that does not exist yet
+      # (404) fails the image build. An empty signed index is published to any
+      # channel that has none. This also stops here, before the ten-minute
+      # build, when the APT_SIGNING_KEY secret is missing.
+      - name: Make sure the update channels exist
+        if: hashFiles('app/debian/fieldlink-apt.public.asc') != ''
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/init-apt-channel.sh qa prod
+
       - name: Build with pi-gen
         id: pigen
         uses: usimd/pi-gen-action@cec66cba86bdcd23984e6a79ea4e9251d90bc798 # v1

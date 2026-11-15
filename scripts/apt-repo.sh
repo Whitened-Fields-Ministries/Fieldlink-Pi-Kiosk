@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a signed *flat* apt repository from one or more .deb files.
 #
-#   scripts/apt-repo.sh <suite> <outdir> <file.deb>...
+#   scripts/apt-repo.sh <suite> <outdir> [file.deb...]
 #
 # The result (Packages, Packages.gz, Release, Release.gpg, InRelease and the
 # .deb files) is meant to be uploaded as the assets of one GitHub release
@@ -16,7 +16,8 @@
 set -euo pipefail
 
 SUITE="${1:?suite (qa|prod)}"; OUT="${2:?output directory}"; shift 2
-[ "$#" -ge 1 ] || { echo "usage: $0 <suite> <outdir> <file.deb>..." >&2; exit 2; }
+# No .deb at all is allowed: an empty signed repository is what a channel holds
+# before its first release (scripts/init-apt-channel.sh).
 case "$SUITE" in qa|prod) ;; *) echo "suite must be qa or prod" >&2; exit 2 ;; esac
 
 mkdir -p "$OUT"
@@ -58,4 +59,4 @@ gpg --batch --yes --local-user "$APT_SIGNING_KEYID" --digest-algo SHA256 --clear
 
 echo "==> $OUT ($SUITE):"
 ls -l
-grep -E '^(Package|Version|Architecture|Filename):' Packages
+grep -E '^(Package|Version|Architecture|Filename):' Packages || echo "(no packages yet)"

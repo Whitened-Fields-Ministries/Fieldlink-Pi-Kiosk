@@ -104,6 +104,11 @@ A deployed kiosk gets new builds through apt, never through a new card:
   update channel** and the publish step is skipped; the first release after adding it is the one
   kiosks start updating from, so it should ship in a QA/prod image (a package without the channel
   cannot learn about it later).
+- **A channel always exists.** Every package points at `apt-prod` from its first boot, and the
+  image build runs `apt-get update` inside the image, so a channel that answers 404 breaks the
+  build (it did, on the first `v0.3.3-qa`). Before building the image the QA run publishes an empty
+  signed index to any channel that has none (`scripts/init-apt-channel.sh`); it also stops there,
+  early, when the `APT_SIGNING_KEY` secret is missing.
 - **Every publish is read back.** After uploading a channel, `scripts/publish-apt.sh` runs
   `scripts/verify-apt-channel.sh`, which reads it through apt exactly as a kiosk does (the
   package's own source entry and key, a private apt root): the signature must verify, the candidate
