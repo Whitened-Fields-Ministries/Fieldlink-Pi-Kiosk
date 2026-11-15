@@ -54,6 +54,9 @@ case "$1" in
     # Nightly updates: apt's timers exist on every Debian; make sure they run.
     if [ -d /run/systemd/system ]; then
       systemctl enable apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+      # Pick up this package's 3 a.m. schedule for the upgrade run.
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      systemctl try-restart apt-daily-upgrade.timer >/dev/null 2>&1 || true
     fi
 
     # The unit is enabled by the image build (and by hand on a stock Pi OS);

@@ -43,6 +43,7 @@ echo "==> assembling package tree"
 install -d "$ROOT/DEBIAN" "$ROOT/opt" "$ROOT/usr/bin" "$ROOT/usr/lib/systemd/system" \
   "$ROOT/etc/pam.d" "$ROOT/etc/polkit-1/rules.d" "$ROOT/etc/NetworkManager/dnsmasq-shared.d" \
   "$ROOT/etc/sysctl.d" "$ROOT/usr/lib/fieldlink-kiosk" "$ROOT/etc/sudoers.d" "$ROOT/etc/apt/apt.conf.d" \
+  "$ROOT/usr/lib/systemd/system/apt-daily-upgrade.timer.d" \
   "$ROOT/etc/apt/keyrings" "$ROOT/usr/share/fieldlink-kiosk" "$ROOT/usr/share/doc/$NAME"
 cp -a "$APP_SRC" "$ROOT/opt/$NAME"
 # packager leaves its output directory 0700; the app runs as the kiosk user.
@@ -58,6 +59,7 @@ install -m 0644 debian/sysctl-fieldlink-kiosk.conf "$ROOT/etc/sysctl.d/50-fieldl
 install -m 0755 debian/root-helper "$ROOT/usr/lib/fieldlink-kiosk/root-helper"
 install -m 0440 debian/sudoers-fieldlink-kiosk "$ROOT/etc/sudoers.d/fieldlink-kiosk"
 install -m 0644 debian/apt-52fieldlink-kiosk "$ROOT/etc/apt/apt.conf.d/52fieldlink-kiosk"
+install -m 0644 debian/apt-daily-upgrade-timer.conf "$ROOT/usr/lib/systemd/system/apt-daily-upgrade.timer.d/fieldlink-kiosk.conf"
 CONFFILES=(/etc/pam.d/fieldlink-kiosk /etc/polkit-1/rules.d/50-fieldlink-kiosk.rules
   /etc/NetworkManager/dnsmasq-shared.d/fieldlink-kiosk.conf /etc/sysctl.d/50-fieldlink-kiosk.conf
   /etc/sudoers.d/fieldlink-kiosk /etc/apt/apt.conf.d/52fieldlink-kiosk)

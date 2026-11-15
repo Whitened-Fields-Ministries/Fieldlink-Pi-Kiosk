@@ -80,7 +80,7 @@ A deployed kiosk gets new builds through apt, never through a new card:
 - The package writes `/etc/apt/sources.list.d/fieldlink.sources` at install (a signed **flat** apt repository
   held as the assets of the `apt-prod` GitHub release), the repository's public key in
   `/etc/apt/keyrings/`, and an `unattended-upgrades` policy that takes packages from the FieldLink
-  origin and Debian security nightly (apt's daily timers). The package's `postinst` restarts the
+  origin nightly (see *System updates* below for the rest). The package's `postinst` restarts the
   display, so an overnight update is a few seconds of dark screen.
 - The settings screen (Ctrl+Shift+K or the corner hold) has **Updates** (check now, install now,
   progress), **Restart**, **Show log** (journal + `kiosk.log`) and **Factory reset** (forgets the
@@ -116,8 +116,17 @@ A deployed kiosk gets new builds through apt, never through a new card:
   nightly update never stops to ask about a changed file.
 - A QA retry (`vX.Y.Z-qa.2`) has the same package version, so displays already on `X.Y.Z` do not
   take it. Bump the version when deployed QA displays must pick up a change.
-- What still needs a new image: kernel, firmware and anything under `/boot/firmware`. Those come
-  from the Raspberry Pi archive and are deliberately not auto-installed (they need a reboot).
+- **System updates.** The same nightly run (`/etc/apt/apt.conf.d/52fieldlink-kiosk`) installs every
+  Debian update for the release (fixes and security) and Raspberry Pi's own packages: kernel,
+  firmware, bootloader tools. A timer drop-in moves the run from Debian's 6 to 7 a.m. to about
+  3 a.m. (image time zone, US Eastern), and the Pi restarts straight after an update that needs it
+  (a new kernel), so that happens while the building is empty. Config-file questions are answered
+  "keep the current file"; an interrupted run is repaired on the next one. This does not depend
+  on the signing key: a build without an update channel still takes system updates, only the
+  display program stays as flashed. The settings screen shows how many system updates are waiting
+  and whether a restart is pending. The image build fails if either archive stops announcing the
+  origin the policy matches (`o=Debian`, `o=Raspberry Pi Foundation`).
+- What still needs a new image: a move to the next Debian release (trixie → forky). Nothing else.
 - Read-only root was in the original plan and is **not** done: an overlay root discards apt
   updates on reboot unless every update also remounts and writes the lower layer, which is what
   this milestone chose to avoid. `fsck.repair=yes` is on the kernel line and the state directory is
@@ -234,7 +243,10 @@ with the downloaded `.img.xz` always works too.
 21. **Restart** reboots; **Show log** shows the journal; **Factory reset** (two confirmations)
     reboots to a fresh pairing code with no saved Wi‑Fi, and the Wi‑Fi hotspot appears within
     ~10 s when the cable is out.
-22. Leave the Pi on overnight with an older version installed: `journalctl -u apt-daily-upgrade`
+22. System updates: over ssh, `sudo unattended-upgrade --dry-run -d 2>&1 | grep -iE "allowed origins|pkgs that look"`
+    must list FieldLink, Debian and Raspberry Pi Foundation among the allowed origins, and
+    `systemctl list-timers apt-daily-upgrade.timer` must show the next run at about 03:00.
+23. Leave the Pi on overnight with an older version installed: `journalctl -u apt-daily-upgrade`
     and `/var/log/unattended-upgrades/` show the nightly install.
 
 Things worth writing down for the PR: how long from power to code, whether the TV negotiated

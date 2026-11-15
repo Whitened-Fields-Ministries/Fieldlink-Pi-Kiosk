@@ -1,16 +1,30 @@
-// FieldLink kiosk: unattended-upgrades takes new kiosk builds from the
-// FieldLink repository and security fixes from Debian, nightly (apt-daily
-// timers). Kernel/firmware updates from the Raspberry Pi archive are left
-// alone: they need a reboot and are rolled out with a new image instead.
+// FieldLink kiosk: the display keeps itself current, nightly, with nobody
+// touching it. unattended-upgrades installs
+//   - new kiosk builds from the FieldLink repository,
+//   - every Debian update for this release (fixes and security),
+//   - Raspberry Pi's own packages: kernel, firmware, bootloader tools,
+// and restarts the Pi straight after an update that needs it (a new kernel).
+// The run is moved to about 3 a.m. by a timer drop-in in this package
+// (apt-daily-upgrade.timer.d), so that restart happens while nobody is looking.
 Unattended-Upgrade::Origins-Pattern {
     "origin=FieldLink";
+    "origin=Debian,codename=${distro_codename},label=Debian";
+    "origin=Debian,codename=${distro_codename}-updates,label=Debian";
     "origin=Debian,codename=${distro_codename},label=Debian-Security";
     "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+    "origin=Raspberry Pi Foundation,codename=${distro_codename}";
+    "site=archive.raspberrypi.com";
 };
-Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 Unattended-Upgrade::MinimalSteps "true";
 Unattended-Upgrade::Verbose "false";
+// Nobody is at the display to answer a question about a changed config file:
+// keep the file that is there.
+Dpkg::Options { "--force-confdef"; "--force-confold"; };
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
