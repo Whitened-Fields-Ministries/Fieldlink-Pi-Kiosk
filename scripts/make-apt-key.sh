@@ -20,6 +20,7 @@
 # Background and key rotation: docs/apt-signing.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$PWD"   # every path below is relative to the repository, wherever the script was started from
 REPO="${GITHUB_REPOSITORY:-Whitened-Fields-Ministries/Fieldlink-Pi-Kiosk}"
 PUB=app/debian/fieldlink-apt.public.asc
 SECRET=1; [ "${1:-}" = "--no-secret" ] && { SECRET=0; shift; }
@@ -35,15 +36,15 @@ gpg --batch --quiet --no-auto-check-trustdb --pinentry-mode loopback --passphras
   "Field Link Missions kiosk apt repository <support@fieldlinkmissions.com>" ed25519 sign 0
 KEYID="$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1=="sec"{print $5; exit}')"
 
-( umask 077; gpg --batch --armor --export-secret-keys "$KEYID" > "$BACKUP" )
-gpg --batch --armor --export "$KEYID" > "$PUB"
+( umask 077; gpg --batch --quiet --no-auto-check-trustdb --armor --export-secret-keys "$KEYID" > "$BACKUP" )
+gpg --batch --quiet --no-auto-check-trustdb --armor --export "$KEYID" > "$PUB"
 
 # Prove the two files belong together before anything depends on them.
 CHECK="$(mktemp -d)"
 ( export GNUPGHOME="$CHECK"; chmod 700 "$CHECK"
   gpg --batch --quiet --import "$BACKUP"
   echo "fieldlink" | gpg --batch --quiet --pinentry-mode loopback --passphrase '' --local-user "$KEYID" --clearsign > "$CHECK/signed"
-  gpg --batch --quiet --no-default-keyring --keyring "$CHECK/pub.kbx" --import "$OLDPWD/$PUB"
+  gpg --batch --quiet --no-default-keyring --keyring "$CHECK/pub.kbx" --import "$ROOT/$PUB"
   gpg --batch --quiet --no-default-keyring --keyring "$CHECK/pub.kbx" --verify "$CHECK/signed" 2>/dev/null ) \
   || { rm -rf "$CHECK" "$PUB" "$BACKUP"; echo "the exported halves do not match; nothing was kept" >&2; exit 1; }
 rm -rf "$CHECK"
