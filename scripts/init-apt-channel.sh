@@ -33,7 +33,7 @@ for SUITE in "$@"; do
   fi
   OUT="$(mktemp -d)"
   "$HERE/apt-repo.sh" "$SUITE" "$OUT"
-  gh release upload "$REL" "$OUT"/Packages "$OUT"/Packages.gz "$OUT"/Release "$OUT"/Release.gpg "$OUT"/InRelease --repo "$GITHUB_REPOSITORY" --clobber
+  gh release upload "$REL" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
   rm -rf "$OUT"
   for attempt in 1 2 3; do
     if "$HERE/verify-apt-channel.sh" "$SUITE" none arm64; then continue 2; fi
