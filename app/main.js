@@ -37,7 +37,7 @@
 //   --smoke-test  start, load the recovery screen once, exit 0 — used by CI to
 //                 prove the packaged app runs on the target architecture.
 
-const { app, BrowserWindow, ipcMain, net, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, net, powerSaveBlocker, screen } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const os   = require('os');
@@ -45,6 +45,7 @@ const { execFile } = require('child_process');
 const QRCode = require('qrcode');
 const network = require('./network');
 const { createSetupServer } = require('./setup-server');
+const displayScale = require('./display-scale');
 
 const APP_VERSION        = app.getVersion();
 // The FieldLink app lives on the app. host; the bare domain is the public website.
@@ -295,6 +296,7 @@ function stateForPage() {
     pair:          pair ? { code: pair.code, expiresAt: pair.expiresAt, origin: pair.origin, status: pair.status, error: pair.error } : null,
     platform:      process.platform,
     net:           netForPage(),
+    display,
     updateState,
   };
 }
@@ -463,6 +465,7 @@ function watchConfigDirs() {
 function onConfigChanged() {
   const before = kioskUrl;
   applyConfig();
+  applyDisplayScale();
   if (kioskUrl && kioskUrl !== before) {
     log('config: kioskUrl changed on disk — reloading');
     invalidStreak = 0; keyInfo = null;
@@ -1051,7 +1054,43 @@ function handleShortcut(input) {
 }
 
 // ── Window ───────────────────────────────────────────────────────────────────
+// ── Display scale ────────────────────────────────────────────────────────────
+// The pages are laid out for a 1080p TV; a 4K TV would show them at half size.
+// display-scale.js works out the magnification from the screen's resolution
+// (or takes config.json's "displayScale"), and it is applied as the page zoom.
+let display = { width: null, height: null, scale: 1, zoom: 1, pinned: false };
+
+function measureDisplay() {
+  let physical = null, dsf = 1;
+  try {
+    const d = screen.getPrimaryDisplay();
+    dsf = d.scaleFactor || 1;
+    physical = { width: Math.round(d.size.width * dsf), height: Math.round(d.size.height * dsf) };
+  } catch (e) { log(`display: cannot read the screen size: ${e.message}`); }
+  const { config } = loadConfig();
+  const override = config ? config.displayScale : undefined;
+  const next = {
+    width: physical ? physical.width : null, height: physical ? physical.height : null,
+    scale: displayScale.scaleFor(physical, override), zoom: displayScale.zoomFor(physical, dsf, override),
+    pinned: displayScale.parseOverride(override) !== null,
+  };
+  if (next.width !== display.width || next.height !== display.height || next.zoom !== display.zoom) {
+    log(`display: ${next.width || '?'}×${next.height || '?'} → ${next.scale}× (${next.pinned ? 'set in config.json' : 'calculated'}${dsf !== 1 ? `, compositor already ${dsf}×` : ''})`);
+  }
+  display = next;
+  return display;
+}
+
+function applyDisplayScale() {
+  measureDisplay();
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    try { win.webContents.setZoomFactor(display.zoom); } catch (e) { log(`display: cannot set the zoom: ${e.message}`); }
+  }
+  pushState();
+}
+
 function createWindow() {
+  measureDisplay();
   win = new BrowserWindow({
     width: 1920,
     height: 1080,
@@ -1067,8 +1106,16 @@ function createWindow() {
       sandbox: true,
       spellcheck: false,
       additionalArguments: [`--flk-version=${APP_VERSION}`],
+      zoomFactor: display.zoom,
     },
   });
+
+  // Chromium keeps zoom per site, so every page this window loads gets it again;
+  // a TV swapped for another resolution is picked up without a restart.
+  win.webContents.on('dom-ready', applyDisplayScale);
+  screen.on('display-metrics-changed', applyDisplayScale);
+  screen.on('display-added', applyDisplayScale);
+  screen.on('display-removed', applyDisplayScale);
 
   win.webContents.on('before-input-event', (e, input) => { if (handleShortcut(input)) e.preventDefault(); });
 
@@ -1147,6 +1194,17 @@ function runSmokeTest() {
       const r = await win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"');
       console.log(`smoke-test: recovery screen loaded (${r}) — electron ${process.versions.electron}, ${process.arch}`);
       if (r !== 'ok') { clearTimeout(timer); return app.exit(1); }
+      // Display scale: the page must be as wide, in its own pixels, as the window
+      // divided by the zoom. The zoom lands a moment after it is set, so look a few times.
+      const expected = win.getContentSize()[0] / display.zoom;
+      let inner = 0, scaled = false;
+      for (let i = 0; i < 30 && !scaled; i++) {
+        inner = await win.webContents.executeJavaScript('window.innerWidth');
+        scaled = Math.abs(inner - expected) <= Math.max(2, expected * 0.02);
+        if (!scaled) await new Promise(res => setTimeout(res, 100));
+      }
+      console.log(`smoke-test: screen ${display.width}×${display.height}, scale ${display.scale}×, page ${inner} px wide in a ${win.getContentSize()[0]} px window — ${scaled ? 'ok' : 'WRONG'}`);
+      if (!scaled) { clearTimeout(timer); return app.exit(1); }
       // The corner-hold gesture, end to end: a synthetic pointer-down in the
       // corner must reach preload.js and, four seconds later, this process.
       await win.webContents.executeJavaScript("window.dispatchEvent(new PointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerId: 1, isPrimary: true, bubbles: true }))");
