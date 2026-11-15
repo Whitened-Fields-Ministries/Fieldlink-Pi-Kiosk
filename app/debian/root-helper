@@ -17,6 +17,8 @@
 #                         network, then reboot
 #   logs                  last lines of the display's journal
 #   channel [qa|prod]     show or switch the update channel (apt source)
+#   timezone <Area/City>  set the system time zone, so the nightly update run
+#                         (3 a.m.) happens at 3 a.m. where the display is
 set -eu
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C
 PKG=fieldlink-pi-kiosk
@@ -25,7 +27,7 @@ SOURCES=/etc/apt/sources.list.d/fieldlink.sources
 UPDATE_UNIT=fieldlink-kiosk-update
 UPDATE_LOG=/var/log/fieldlink-kiosk-update.log
 
-usage() { echo "usage: root-helper check-update|update|update-now|reboot|factory-reset|logs|channel [qa|prod]" >&2; exit 2; }
+usage() { echo "usage: root-helper check-update|update|update-now|reboot|factory-reset|logs|channel [qa|prod]|timezone <Area/City>" >&2; exit 2; }
 [ "$(id -u)" = 0 ] || { echo "root-helper: must run as root (through sudo)" >&2; exit 1; }
 [ "$#" -ge 1 ] || usage
 
@@ -99,6 +101,19 @@ case "$1" in
       qa|prod) sed -i "s|/releases/download/apt-[a-z]*/|/releases/download/apt-$2/|" "$SOURCES"; echo "channel=$2"; apt_update ;;
       *) usage ;;
     esac
+    ;;
+  timezone)
+    [ "$#" -eq 2 ] || usage
+    # A zone name only: letters, digits, "_", "+", "-" and "/", no "..", not
+    # absolute, and it must be a zone this system knows.
+    case "$2" in
+      ""|/*|*..*|*[!A-Za-z0-9_+/-]*) echo "timezone: not a zone name" >&2; exit 2 ;;
+    esac
+    [ -f "/usr/share/zoneinfo/$2" ] || { echo "timezone: unknown zone $2" >&2; exit 2; }
+    timedatectl set-timezone "$2"
+    # The nightly run is a calendar timer in local time; make it take the new zone now.
+    systemctl try-restart apt-daily-upgrade.timer >/dev/null 2>&1 || true
+    echo "timezone=$2"
     ;;
   *) usage ;;
 esac

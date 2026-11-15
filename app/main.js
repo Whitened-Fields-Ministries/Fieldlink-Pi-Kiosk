@@ -289,6 +289,7 @@ function stateForPage() {
     configSource,
     configTargets: writableConfigTargets(),
     logPath:       logPath(),
+    timezone:      systemTimezone(),
     lastCheck,
     lastGoodAt,
     nextCheckAt,
@@ -405,6 +406,7 @@ async function runCheck() {
       invalidStreak = 0; offlineStreak = 0; lastGoodAt = Date.now();
       if (result.info && (result.info.name || result.info.key_prefix)) keyInfo = result.info;
       followServerChannel(result.info && result.info.update_channel);
+      applyTimezone(result.info && result.info.timezone, 'the FieldLink server');
       const recovering = view === 'recovery' && ['invalid-key', 'offline', 'server', 'no-config'].includes(recoveryReason);
       if (recovering || (view === 'kiosk' && pageFailed)) {
         log(`health: ok — loading kiosk (was ${view}/${recoveryReason || (pageFailed ? 'page-failed' : '')})`);
@@ -635,6 +637,40 @@ async function followServerChannel(wanted) {
   }
 }
 
+// ── Time zone ────────────────────────────────────────────────────────────────
+// Every image starts in one time zone, but the nightly update run (and the
+// restart after a kernel update) is meant for 3 a.m. where the display hangs.
+// The zone comes from the phone that sets up Wi-Fi (it is standing next to the
+// display) and, when a FieldLink server sends one with the key check or at
+// linking, from the server, which then wins. It is set through the root
+// helper; systemd's calendar timers follow the system zone.
+function systemTimezone() {
+  try { const m = /zoneinfo\/(.+)$/.exec(fs.readlinkSync('/etc/localtime')); if (m) return m[1]; } catch {}
+  try { return fs.readFileSync('/etc/timezone', 'utf8').trim() || null; } catch { return null; }
+}
+const refusedTimezones = new Set();   // zones the helper would not set; not asked again until the next start
+let settingTimezone = false;
+async function applyTimezone(tz, source) {
+  if (typeof tz !== 'string' || !tz || settingTimezone || refusedTimezones.has(tz)) return;
+  if (tz === systemTimezone()) return;
+  settingTimezone = true;
+  try {
+    const r = await runHelper(['timezone', tz], { timeoutMs: 30 * 1000 });
+    const un = helperUnavailable(r);
+    if (un || r.code) {
+      refusedTimezones.add(tz);
+      log(`timezone: could not set ${tz} (from ${source}) — ${un || r.stderr.trim().split('\n').pop() || `helper exit ${r.code}`}`);
+      return;
+    }
+    log(`timezone: set to ${tz} (from ${source}); updates now run at about 3 a.m. there`);
+    pushState();
+  } catch (e) {
+    log(`timezone: error ${e && e.message || e}`);
+  } finally {
+    settingTimezone = false;
+  }
+}
+
 ipcMain.handle('kiosk:update-check', () => checkUpdate());
 ipcMain.handle('kiosk:update-install', () => installUpdate());
 ipcMain.handle('kiosk:update-state', () => updateState);
@@ -767,6 +803,7 @@ async function netTick() {
     }
     if (netState.phase === 'connecting') return; // joinNetwork() is driving
     if (netState.phase === 'hotspot' && st.hotspot.active) {
+      if (!setupServer || !setupServer.running) { log('net: the setup network is up but its page is not — starting the page'); await startSetupPage(); }
       // A router reboot or a Wi-Fi outage should not leave the display in
       // setup mode forever: with nobody on the phone page, drop the hotspot
       // now and then so NetworkManager can retry the saved network.
@@ -806,15 +843,32 @@ async function startHotspot(reason) {
     try { netState.qr = await QRCode.toDataURL(hs.qr, { margin: 1, width: 480, errorCorrectionLevel: 'M', color: { dark: '#0a0f1aff', light: '#ffffffff' } }); }
     catch (e) { netState.qr = null; log(`net: QR failed: ${e.message}`); }
     netState.phase = 'hotspot'; netState.hotspotUpAt = Date.now(); netState.lastPhoneHitAt = null;
-    if (!setupServer) setupServer = createSetupServer({ backend: setupBackend(), log });
-    try { await setupServer.start(80, network.HOTSPOT_ADDR); }
-    catch (e) { log(`net: setup page cannot listen on port 80: ${e.message}`); netState.lastError = `The phone setup page could not start (${e.message}). Use a keyboard instead.`; }
+    await startSetupPage();
     log(`net: setup network "${hs.ssid}" is up, page at http://${network.HOTSPOT_ADDR}/`);
   } catch (e) {
     netState.phase = 'idle'; netState.lastError = e.message; netState.noNetSince = Date.now();
     log(`net: hotspot failed: ${e.message}`);
   }
   pushState();
+}
+
+// The page the phone opens. It listens on every address rather than the
+// hotspot's own: after a failed join the hotspot comes back, and binding to
+// an address the interface does not hold yet would leave the setup network
+// up with nothing answering on it. netTick starts it again whenever the
+// hotspot is up and the page is not.
+async function startSetupPage() {
+  if (!setupServer) setupServer = createSetupServer({ backend: setupBackend(), log });
+  if (setupServer.running) return true;
+  try {
+    await setupServer.start(80, '0.0.0.0');
+    if (netState.lastError && /setup page could not start/.test(netState.lastError)) netState.lastError = null;
+    return true;
+  } catch (e) {
+    log(`net: setup page cannot listen on port 80: ${e.message}`);
+    netState.lastError = `The phone setup page could not start (${e.message}). Trying again; a keyboard works meanwhile.`;
+    return false;
+  }
 }
 
 async function stopHotspot() {
@@ -866,7 +920,7 @@ function setupBackend() {
       error: netState.lastError,
       hotspot: { ssid: netState.hotspot && netState.hotspot.ssid },
     }),
-    connect: (ssid, password) => joinNetwork(ssid, password, 'phone'),
+    connect: (ssid, password, extra) => { applyTimezone(extra && extra.timezone, 'the phone that set up Wi-Fi'); return joinNetwork(ssid, password, 'phone'); },
     touch: () => { netState.lastPhoneHitAt = Date.now(); },
   };
 }
@@ -1002,6 +1056,7 @@ async function pollPairRequest() {
         const linked = `${p.origin}/kiosk?key=${parsed.key}`;
         const saved = saveConfig({ kioskUrl: linked });
         keyInfo = r.body.key || null; kioskUrl = linked; configSource = saved; invalidStreak = 0;
+        applyTimezone(r.body.timezone, 'the FieldLink server');
         log(`pair-request: linked as "${(r.body.key && r.body.key.name) || '?'}" — saved to ${saved}`);
         stopPairRequest();
         showKiosk();

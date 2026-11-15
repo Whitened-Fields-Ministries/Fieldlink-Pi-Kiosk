@@ -331,7 +331,7 @@
     setText('m-key', s.keyPrefix || '—');
     setText('m-check', lc ? fmtTime(lc.at) + (s.lastGoodAt ? ' · last OK ' + fmtTime(s.lastGoodAt) : '') : '—');
     setText('m-net', noNet ? 'no address (cable unplugged or DHCP pending)' : s.addresses.join(' · '));
-    setText('m-clock', new Date().toLocaleString() + (s.clockSynced === false ? ' · not yet synchronised' : ' · synchronised'));
+    setText('m-clock', new Date().toLocaleString() + (s.clockSynced === false ? ' · not yet synchronised' : ' · synchronised') + (s.timezone ? ' · time zone ' + s.timezone : ''));
     setText('m-config', s.configSource || ('none yet — will be created at ' + (s.configTargets && s.configTargets[0])));
     setText('m-log', s.logPath || '—');
     setText('m-host', (s.hostname || '—') + ' · ' + (s.platform || ''));

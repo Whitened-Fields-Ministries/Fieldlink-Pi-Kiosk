@@ -162,3 +162,28 @@ test('every answer closes its connection and the first hit of each kind is logge
     assert.match(probeLines[0], /→ 302/);
   } finally { await srv.stop(); }
 });
+
+test('the phone\'s time zone is passed on with the join; junk is dropped', async () => {
+  const { cleanTimezone } = require('../setup-server');
+  assert.equal(cleanTimezone('America/Chicago'), 'America/Chicago');
+  assert.equal(cleanTimezone('America/Argentina/Buenos_Aires'), 'America/Argentina/Buenos_Aires');
+  assert.equal(cleanTimezone('Etc/GMT+5'), 'Etc/GMT+5');
+  assert.equal(cleanTimezone('UTC'), 'UTC');
+  for (const bad of ['../../etc/passwd', '/etc/localtime', 'America/Chicago; reboot', '', null, 42, 'a'.repeat(80), 'A/B/C/D']) assert.equal(cleanTimezone(bad), null);
+
+  const calls = [];
+  const srv = createSetupServer({ backend: { getNetworks: async () => ({ networks: [] }), getStatus: async () => ({ phase: 'hotspot', hotspot: { ssid: 'FieldLink-TEST' } }), connect: async (...a) => { calls.push(a); } } });
+  const { port } = await srv.start(0, '127.0.0.1');
+  try {
+    const post = body => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/api/connect', method: 'POST', headers: { 'Content-Type': 'application/json' } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      req.on('error', reject); req.end(JSON.stringify(body));
+    });
+    assert.equal(await post({ ssid: 'ChurchWifi', password: 'correct horse', timezone: 'America/Denver' }), 200);
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(await post({ ssid: 'ChurchWifi', password: 'correct horse', timezone: '../etc' }), 200);
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(calls[0], ['ChurchWifi', 'correct horse', { timezone: 'America/Denver' }]);
+    assert.deepEqual(calls[1], ['ChurchWifi', 'correct horse', { timezone: null }]);
+  } finally { await srv.stop(); }
+});

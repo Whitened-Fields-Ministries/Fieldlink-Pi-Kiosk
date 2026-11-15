@@ -6,6 +6,8 @@
 // and restarts the Pi straight after an update that needs it (a new kernel).
 // The run is moved to about 3 a.m. by a timer drop-in in this package
 // (apt-daily-upgrade.timer.d), so that restart happens while nobody is looking.
+// 3 a.m. is in the system time zone, which the display sets to where it is
+// (root-helper timezone; from the phone that set up Wi-Fi, or the server).
 Unattended-Upgrade::Origins-Pattern {
     "origin=FieldLink";
     "origin=Debian,codename=${distro_codename},label=Debian";

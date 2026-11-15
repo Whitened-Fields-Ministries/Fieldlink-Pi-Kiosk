@@ -14,7 +14,7 @@ const HOTSPOT_CON  = 'FieldLink-Setup';       // NetworkManager profile name
 const HOTSPOT_ADDR = '10.42.0.1';             // the Pi's address on the setup network
 const HOTSPOT_CIDR = `${HOTSPOT_ADDR}/24`;
 const NMCLI_TIMEOUT_MS = 25 * 1000;
-const CONNECT_TIMEOUT_S = 45;
+const CONNECT_TIMEOUT_S = 30;
 
 // ── nmcli plumbing ───────────────────────────────────────────────────────────
 class NmError extends Error {
