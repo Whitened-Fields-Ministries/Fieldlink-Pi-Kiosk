@@ -45,6 +45,7 @@ for _ in $(seq 50); do python3 -c "import socket; socket.create_connection(('127
 
 echo "── 0. a channel before its first release (empty, signed) is readable"
 publish; verify none
+if find "$T/www" -type f -size 0 | grep -q .; then echo "FAIL: an empty file in the channel (GitHub refuses zero-byte release assets)" >&2; exit 1; fi
 echo "── 1. a signed channel is read"
 publish "$(deb 0.0.1)"; verify 0.0.1
 echo "── 2. a newer release replaces it"

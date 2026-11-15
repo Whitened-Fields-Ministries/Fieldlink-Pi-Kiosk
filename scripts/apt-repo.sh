@@ -36,6 +36,11 @@ cd "$OUT"
 # the base URL, so strip the "./" (GitHub does not normalise it away).
 dpkg-scanpackages --multiversion . /dev/null 2>/dev/null | sed 's|^Filename: \./|Filename: |' > Packages
 gzip -9 -k -n -f Packages
+# An empty channel has an empty Packages file, and GitHub refuses a zero-byte
+# release asset ("Bad Content-Length"). The index then lists only Packages.gz,
+# which is never empty; apt needs just one of the two.
+INDEXES=(Packages Packages.gz)
+if [ ! -s Packages ]; then rm -f Packages; INDEXES=(Packages.gz); fi
 
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 md5() { md5sum "$1" | cut -d' ' -f1; }
@@ -48,9 +53,9 @@ md5() { md5sum "$1" | cut -d' ' -f1; }
   echo "Description: Field Link Missions kiosk display updates ($SUITE)"
   echo "Date: $(LC_ALL=C date -u -R)"
   echo "MD5Sum:"
-  for f in Packages Packages.gz; do printf ' %s %16d %s\n' "$(md5 "$f")" "$(stat -c %s "$f")" "$f"; done
+  for f in "${INDEXES[@]}"; do printf ' %s %16d %s\n' "$(md5 "$f")" "$(stat -c %s "$f")" "$f"; done
   echo "SHA256:"
-  for f in Packages Packages.gz; do printf ' %s %16d %s\n' "$(sha "$f")" "$(stat -c %s "$f")" "$f"; done
+  for f in "${INDEXES[@]}"; do printf ' %s %16d %s\n' "$(sha "$f")" "$(stat -c %s "$f")" "$f"; done
 } > Release
 
 rm -f Release.gpg InRelease
@@ -59,4 +64,4 @@ gpg --batch --yes --local-user "$APT_SIGNING_KEYID" --digest-algo SHA256 --clear
 
 echo "==> $OUT ($SUITE):"
 ls -l
-grep -E '^(Package|Version|Architecture|Filename):' Packages || echo "(no packages yet)"
+if [ -s Packages ]; then grep -E '^(Package|Version|Architecture|Filename):' Packages; else echo "(no packages yet)"; fi
