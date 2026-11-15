@@ -42,6 +42,22 @@ PermitRootLogin no
 EOT
 chmod 644 "${ROOTFS_DIR}/etc/ssh/sshd_config.d/10-fieldlink-kiosk.conf"
 
+# System updates come from two archives, matched by origin in the package's
+# unattended-upgrades policy (/etc/apt/apt.conf.d/52fieldlink-kiosk). If either
+# archive ever renames itself, kiosks would silently stop taking its updates,
+# so the build stops here instead.
+on_chroot << 'EOT'
+policy="$(apt-cache policy)"
+have() { printf '%s\n' "$policy" | grep -q "$1"; }
+# Raspberry Pi's archive is matched by origin name and, as a fallback, by host.
+if ! have 'o=Debian,' || ! { have 'o=Raspberry Pi Foundation,' || have 'origin archive.raspberrypi.com'; }; then
+	echo "stage-fieldlink: the Debian or Raspberry Pi apt source is not what app/debian/apt-52fieldlink-kiosk matches (fix its Origins-Pattern):" >&2
+	printf '%s\n' "$policy" | grep -E ' release | origin ' >&2
+	exit 1
+fi
+systemctl enable apt-daily.timer apt-daily-upgrade.timer
+EOT
+
 # Version marker for the recovery screen and support.
 echo "fieldlink-kiosk-image ${FIELDLINK_IMAGE_VERSION:-dev} $(basename "${DEB}")" > "${ROOTFS_DIR}/etc/fieldlink-kiosk-image"
 

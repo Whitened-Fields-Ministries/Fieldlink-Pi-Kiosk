@@ -525,12 +525,14 @@ async function checkUpdate() {
   const get = k => { const m = r.stdout.match(new RegExp(`^${k}=(.*)$`, 'm')); return m ? m[1].trim() : null; };
   const installed = get('installed') || APP_VERSION;
   const candidate = get('candidate');
+  const systemPending = parseInt(get('system_pending'), 10) || 0;   // system packages waiting for tonight's run
+  const rebootRequired = get('reboot_required') === 'yes';
   const ch = await runHelper(['channel'], { timeoutMs: 30 * 1000 });
   const channel = (ch.stdout.match(/^channel=(.*)$/m) || [])[1] || 'none';
   const newer = !!candidate && candidate !== '(none)' && cmpVersion(candidate, installed) > 0;
   const noSource = channel === 'none';
-  log(`update: installed ${installed}, candidate ${candidate || '?'}, channel ${channel}${r.code ? `, helper exit ${r.code}` : ''}`);
-  setUpdateState({ phase: 'idle', available: true, installed, candidate, newer, channel, checkedAt: Date.now(), error: r.code ? (r.stderr.trim().split('\n').pop() || `helper exit ${r.code}`) : null,
+  log(`update: installed ${installed}, candidate ${candidate || '?'}, channel ${channel}, ${systemPending} system update(s) waiting${rebootRequired ? ', restart pending' : ''}${r.code ? `, helper exit ${r.code}` : ''}`);
+  setUpdateState({ phase: 'idle', available: true, installed, candidate, newer, channel, systemPending, rebootRequired, checkedAt: Date.now(), error: r.code ? (r.stderr.trim().split('\n').pop() || `helper exit ${r.code}`) : null,
     message: noSource ? 'This build has no update channel configured.' : newer ? `Version ${candidate} is available.` : `Up to date (${installed}).` });
   return updateState;
 }

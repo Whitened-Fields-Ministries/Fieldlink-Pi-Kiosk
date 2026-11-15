@@ -5,8 +5,9 @@
 #   APT_SIGNING_KEY=<armored private key> GH_TOKEN=… scripts/publish-apt.sh qa out/*.deb
 #
 # The release "apt-qa" / "apt-prod" is created on first use and never becomes
-# "latest". Old assets are removed so the index only ever describes the files
-# next to it.
+# "latest". Assets of the previous build are removed once the new ones are up,
+# so the index only ever describes files that are next to it. The channel is
+# then read back the way a kiosk reads it (scripts/verify-apt-channel.sh).
 set -euo pipefail
 SUITE="${1:?suite (qa|prod)}"; shift
 [ "$#" -ge 1 ] || { echo "usage: $0 <suite> <file.deb>..." >&2; exit 2; }
@@ -25,9 +26,23 @@ if ! gh release view "$REL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
   gh release create "$REL" --repo "$GITHUB_REPOSITORY" --title "APT repository ($SUITE)" --latest=false "${extra[@]}" \
     --notes "Signed flat apt repository for deployed FieldLink kiosks ($SUITE channel). Not for downloading by hand: kiosks read it through apt (see the repository README). Assets are replaced on every release."
 fi
+# Packages first, the signed index after them, stale files last: a kiosk that
+# reads the channel mid-publish then sees either the old index (whose .deb is
+# still there) or the new one (whose .deb is already there), never a gap.
+gh release upload "$REL" "$OUT"/*.deb --repo "$GITHUB_REPOSITORY" --clobber
+gh release upload "$REL" "$OUT"/Packages "$OUT"/Packages.gz "$OUT"/Release "$OUT"/Release.gpg "$OUT"/InRelease --repo "$GITHUB_REPOSITORY" --clobber
 for a in $(gh release view "$REL" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
-  gh release delete-asset "$REL" "$a" --repo "$GITHUB_REPOSITORY" --yes
+  [ -e "$OUT/$a" ] || gh release delete-asset "$REL" "$a" --repo "$GITHUB_REPOSITORY" --yes
 done
-gh release upload "$REL" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
 echo "==> published to https://github.com/$GITHUB_REPOSITORY/releases/download/$REL/"
+
+# Read it back. A release that kiosks cannot install from must fail here, in
+# the release run, not silently on every display that night.
+version="$(dpkg-deb -f "$(ls "$OUT"/*_arm64.deb | head -n 1)" Version)"
+for attempt in 1 2 3; do
+  if "$HERE/verify-apt-channel.sh" "$SUITE" "$version" arm64; then rm -rf "$OUT"; exit 0; fi
+  [ "$attempt" = 3 ] || { echo "channel not readable yet; trying again in 30 s"; sleep 30; }
+done
 rm -rf "$OUT"
+echo "::error::the $SUITE channel was published but does not read back as $version (see above)" >&2
+exit 1

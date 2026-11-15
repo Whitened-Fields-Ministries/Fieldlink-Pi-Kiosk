@@ -4,7 +4,9 @@
 # the kiosk user run without a password (see sudoers-fieldlink-kiosk). It is a
 # fixed menu, not a shell: every argument is validated here.
 #
-#   check-update          apt-get update, then print installed= / candidate=
+#   check-update          apt-get update, then print installed= / candidate= for the
+#                         display program, system_pending= (system packages the
+#                         nightly run will install) and reboot_required=yes|no
 #   update                install the newer fieldlink-pi-kiosk. Runs in its own
 #                         transient systemd unit (the package's postinst restarts
 #                         the display, which would otherwise kill dpkg mid-way);
@@ -37,6 +39,8 @@ case "$1" in
     [ "$#" -eq 1 ] || usage
     apt_update
     apt-cache policy "$PKG" | awk '/Installed:/{print "installed=" $2} /Candidate:/{print "candidate=" $2}'
+    echo "system_pending=$(apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep '^Inst ' | grep -vc "^Inst $PKG " || true)"
+    if [ -e /run/reboot-required ]; then echo "reboot_required=yes"; else echo "reboot_required=no"; fi
     ;;
   update)
     [ "$#" -eq 1 ] || usage

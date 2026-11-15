@@ -23,7 +23,7 @@ mkdir -p "$OUT"
 for f in "$@"; do test -f "$f" || { echo "missing $f" >&2; exit 1; }; cp -f "$f" "$OUT/"; done
 
 if [ -n "${APT_SIGNING_KEY:-}" ]; then
-  export GNUPGHOME="$(mktemp -d)"
+  GNUPGHOME="$(mktemp -d)"; export GNUPGHOME
   trap 'rm -rf "$GNUPGHOME"' EXIT
   printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --quiet --import
   APT_SIGNING_KEYID="$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1=="sec"{print $5; exit}')"

@@ -248,7 +248,7 @@
       </div>
       <pre id="update-log" class="joblog hidden"></pre>
       <div id="update-msg" class="msg"></div>
-      <p class="small" id="auto-text">New builds install by themselves overnight; the display restarts for a few seconds.</p>
+      <p class="small" id="auto-text">New builds and system updates install by themselves at about 3 a.m.; the display restarts when one needs it.</p>
       <div id="channel-field" class="field hidden">
         <label>Update channel (staff)</label>
         <div class="row" style="margin-top:0"><span id="m-channel" class="pill">—</span><button id="chan-prod" class="link">use prod</button><button id="chan-qa" class="link">use qa</button></div>
@@ -356,9 +356,11 @@
     const pill = $('update-pill'), txt = $('update-text'), install = $('install-btn'), logBox = $('update-log');
     if (!u) { pill.textContent = '—'; pill.className = 'pill'; txt.textContent = 'Installed: FieldLinkPiKiosk ' + ((state && state.appVersion) || '?') + '. Not checked yet.'; install.classList.add('hidden'); logBox.classList.add('hidden'); return; }
     $('m-channel').textContent = u.channel || '—';
-    $('auto-text').textContent = (u.available === false || u.channel === 'none')
-      ? 'This build cannot update itself. A newer version needs the SD card written again with a new image.'
-      : 'New builds install by themselves overnight; the display restarts for a few seconds.';
+    const sys = (u.systemPending ? ' ' + u.systemPending + ' system update' + (u.systemPending === 1 ? '' : 's') + ' waiting for tonight.' : '')
+      + (u.rebootRequired ? ' A restart is pending; it happens tonight, or press Restart.' : '');
+    $('auto-text').textContent = ((u.available === false || u.channel === 'none')
+      ? 'System updates install by themselves at about 3 a.m. The display program in this build cannot update itself: a newer version needs the SD card written again.'
+      : 'New builds and system updates install by themselves at about 3 a.m.; the display restarts when one needs it.') + sys;
     if (u.phase === 'checking') { pill.textContent = 'checking…'; pill.className = 'pill'; }
     else if (u.phase === 'installing') { pill.textContent = 'installing'; pill.className = 'pill warn'; }
     else if (u.phase === 'failed') { pill.textContent = 'failed'; pill.className = 'pill bad'; }

@@ -5,10 +5,16 @@ case "$1" in
   purge)
     # The kiosk URL and log go only on purge; a plain remove keeps the pairing.
     rm -rf /var/lib/fieldlink-kiosk
+    rm -f /etc/apt/sources.list.d/fieldlink.sources
     if getent passwd kiosk >/dev/null; then deluser --system kiosk >/dev/null 2>&1 || true; fi
     if getent group kiosk >/dev/null; then delgroup --system kiosk >/dev/null 2>&1 || true; fi
     ;;
-  remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+  remove)
+    # The key the source names goes with the package; a source left behind
+    # would make every apt-get update on this machine fail.
+    rm -f /etc/apt/sources.list.d/fieldlink.sources
+    ;;
+  upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
     ;;
 esac
 

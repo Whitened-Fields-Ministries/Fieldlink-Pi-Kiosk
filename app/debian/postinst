@@ -33,9 +33,30 @@ case "$1" in
       sysctl -q -p /etc/sysctl.d/50-fieldlink-kiosk.conf >/dev/null 2>&1 || true
     fi
 
+    # The update channel: write the apt source from the package's template,
+    # keeping the channel (qa or prod) this display is already on. A build
+    # without the signing key ships no template and gets no source.
+    TEMPLATE=/usr/share/fieldlink-kiosk/fieldlink.sources
+    SOURCES=/etc/apt/sources.list.d/fieldlink.sources
+    if [ -f "$TEMPLATE" ]; then
+      channel=prod
+      if [ -f "$SOURCES" ]; then
+        cur=$(sed -n 's|^URIs:.*/releases/download/apt-\([a-z]*\)/.*|\1|p' "$SOURCES" | head -n 1)
+        case "$cur" in qa|prod) channel=$cur ;; esac
+      fi
+      mkdir -p /etc/apt/sources.list.d
+      tmp=$(mktemp /etc/apt/fieldlink-sources.XXXXXX)
+      sed "s|/releases/download/apt-[a-z]*/|/releases/download/apt-$channel/|" "$TEMPLATE" > "$tmp"
+      chmod 0644 "$tmp"
+      mv -f "$tmp" "$SOURCES"
+    fi
+
     # Nightly updates: apt's timers exist on every Debian; make sure they run.
     if [ -d /run/systemd/system ]; then
       systemctl enable apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+      # Pick up this package's 3 a.m. schedule for the upgrade run.
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      systemctl try-restart apt-daily-upgrade.timer >/dev/null 2>&1 || true
     fi
 
     # The unit is enabled by the image build (and by hand on a stock Pi OS);
