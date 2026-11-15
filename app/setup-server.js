@@ -167,6 +167,7 @@ function originAllowed(origin, allowedHosts) {
 
 function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
   let server = null; let connecting = false;
+  const hits = new Set();   // request kinds already logged (see "seen" below)
   const setupUrl = `http://${HOTSPOT_ADDR}/`;
   let hosts = allowedHosts ? allowedHosts.map(h => String(h).toLowerCase()) : [HOTSPOT_ADDR];
 
@@ -174,8 +175,22 @@ function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
     const url = new URL(req.url, setupUrl);
     const path = url.pathname;
     const send = (code, body, type = 'text/html; charset=utf-8', headers = {}) => {
-      res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body), 'X-Content-Type-Options': 'nosniff', ...headers });
+      // One request per connection. A phone on a setup hotspot is a poor link
+      // (its Wi-Fi sleeps, it keeps mobile data as its main network), and a
+      // browser that reuses a connection this server has meanwhile dropped
+      // retries, then gives up with ERR_TOO_MANY_RETRIES instead of the page.
+      res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body), 'X-Content-Type-Options': 'nosniff', 'Connection': 'close', ...headers });
       res.end(body);
+      seen(code);
+    };
+    // The first request of each kind goes to the log, so "the page did not open
+    // by itself" can be answered from Show log: did the phone's captive-portal
+    // check reach us, under which name, and what did it get?
+    const seen = code => {
+      const key = `${req.method} ${String(req.headers.host || '-').toLowerCase()}${path}`;
+      if (hits.has(key) || hits.size >= 60) return;
+      hits.add(key);
+      log(`setup-server: ${key} → ${code} (${req.socket.remoteAddress || '?'}, ${String(req.headers['user-agent'] || 'no user agent').slice(0, 70)})`);
     };
     const json = (code, obj) => send(code, JSON.stringify(obj), 'application/json; charset=utf-8');
     try { backend.touch && backend.touch(); } catch {}
@@ -214,10 +229,13 @@ function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
     start(port = 80, host = HOTSPOT_ADDR) {
       return new Promise((resolve, reject) => {
         if (server) return resolve(server.address());
+        hits.clear();
         server = http.createServer((req, res) => { handle(req, res).catch(e => { log(`setup-server: ${e && e.stack || e}`); try { res.writeHead(500); res.end('error'); } catch {} }); });
+        // Generous: a connection the phone opened ahead of time and has not
+        // used yet must not be cut off under it (see "Connection: close" above).
         server.keepAliveTimeout = 5000;
-        server.requestTimeout = 30 * 1000;
-        server.headersTimeout = 10 * 1000;
+        server.requestTimeout = 120 * 1000;
+        server.headersTimeout = 60 * 1000;
         server.once('error', e => { server = null; reject(e); });
         server.listen(port, host, () => {
           const a = server.address();
