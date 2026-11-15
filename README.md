@@ -183,6 +183,9 @@ with the downloaded `.img.xz` always works too.
    `/var/lib/fieldlink-kiosk/config.json`).
 8. Plug in a keyboard: Ctrl+Shift+K shows the settings screen, *Details* lists the Pi's
    IP address; Ctrl+Shift+Q restarts the app within a few seconds.
+9. Optional, over ssh (`ssh fieldlink@<ip>` with the key from step 1):
+   `journalctl -u fieldlink-kiosk -b` for the app log, `cat /etc/fieldlink-kiosk-image` for the
+   build, `sudo cat /var/lib/fieldlink-kiosk/kiosk.log` for the app's own log.
 
 **Wi‑Fi (milestone 2), same card, cable out:**
 
@@ -221,9 +224,6 @@ with the downloaded `.img.xz` always works too.
     ~10 s when the cable is out.
 22. Leave the Pi on overnight with an older version installed: `journalctl -u apt-daily-upgrade`
     and `/var/log/unattended-upgrades/` show the nightly install.
-9. Optional, over ssh (`ssh fieldlink@<ip>` with the key from step 1):
-   `journalctl -u fieldlink-kiosk -b` for the app log, `cat /etc/fieldlink-kiosk-image` for the
-   build, `sudo cat /var/lib/fieldlink-kiosk/kiosk.log` for the app's own log.
 
 Things worth writing down for the PR: how long from power to code, whether the TV negotiated
 4K (`kmsprint` over ssh, or the TV's info button), whether the map is smooth in
@@ -310,7 +310,11 @@ regulatory domain is set to US (`wpa-country`), which is what unblocks the radio
 runs it through [usimd/pi-gen-action](https://github.com/usimd/pi-gen-action) with the pi-gen
 `arm64` branch.
 
-## Milestone 3 preparation
+## Signing key for the update channel
 
-The apt repository that will deliver updates must be signed. `docs/apt-signing.md` has the
-commands to generate the key and where to store it; nothing in milestones 1 or 2 needs it.
+Updates through apt need the repository's signing key: the public half committed as
+`app/debian/fieldlink-apt.public.asc`, the private half as the `APT_SIGNING_KEY` Actions secret.
+`docs/apt-signing.md` has the commands. **The key has not been added yet**, so every build so
+far (through 0.3.3) ships without an update channel: its settings screen says so under *Updates*,
+and a display flashed from one of those images needs a new card to get a newer build. The first
+release tagged after the key file is committed is the first one that updates itself.

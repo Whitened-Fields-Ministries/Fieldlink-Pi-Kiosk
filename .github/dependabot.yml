@@ -13,3 +13,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Composite actions are not found from "/": each directory is listed.
+  - package-ecosystem: github-actions
+    directory: /.github/actions/build-deb
+    schedule:
+      interval: weekly
