@@ -605,14 +605,17 @@ function noteCompletedUpdate() {
 // change; a server that does not send the field leaves the manual switch alone.
 let followedChannel = null;   // last channel the server asked for and we applied (or found in place)
 let followingChannel = false;
+let channelFixed = false;     // no root helper or no apt source in this build: nothing to follow until the next start
 async function followServerChannel(wanted) {
-  if (!['qa', 'prod'].includes(wanted) || wanted === followedChannel || followingChannel) return;
+  if (!['qa', 'prod'].includes(wanted) || wanted === followedChannel || followingChannel || channelFixed) return;
   followingChannel = true;
   try {
     const cur = await runHelper(['channel'], { timeoutMs: 30 * 1000 });
-    if (helperUnavailable(cur)) return;
+    // Neither changes while the app runs (a package that brings a helper or a source
+    // restarts the display), so ask once, not through sudo on every 30 s key check.
+    if (helperUnavailable(cur)) { channelFixed = true; return; }
     const current = (cur.stdout.match(/^channel=(.*)$/m) || [])[1] || 'none';
-    if (current === 'none') return;                       // this build has no update source to point anywhere
+    if (current === 'none') { channelFixed = true; log('update: this build has no update channel — not following the server\'s'); return; }
     if (current === wanted) { followedChannel = wanted; return; }
     log(`update: server asks for the ${wanted} channel (display is on ${current}) — switching`);
     const r = await runHelper(['channel', wanted], { timeoutMs: 3 * 60 * 1000 });
@@ -990,8 +993,10 @@ async function pollPairRequest() {
       const parsed = parseKioskUrl(r.body.url);
       // The server we asked may only link us to itself (a legacy host moves to its app. host).
       if (parsed && parsed.key && KEY_RE.test(parsed.key) && (parsed.origin === p.origin || LEGACY_ORIGINS[parsed.origin] === p.origin)) {
-        const saved = saveConfig({ kioskUrl: `${p.origin}/kiosk?key=${parsed.key}` });
-        keyInfo = r.body.key || null; kioskUrl = parsed.url; configSource = saved; invalidStreak = 0;
+        // Use what was saved: a legacy host in the answer must not be the URL this run loads.
+        const linked = `${p.origin}/kiosk?key=${parsed.key}`;
+        const saved = saveConfig({ kioskUrl: linked });
+        keyInfo = r.body.key || null; kioskUrl = linked; configSource = saved; invalidStreak = 0;
         log(`pair-request: linked as "${(r.body.key && r.body.key.name) || '?'}" — saved to ${saved}`);
         stopPairRequest();
         showKiosk();

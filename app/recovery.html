@@ -356,6 +356,9 @@
     const pill = $('update-pill'), txt = $('update-text'), install = $('install-btn'), logBox = $('update-log');
     if (!u) { pill.textContent = '—'; pill.className = 'pill'; txt.textContent = 'Installed: FieldLinkPiKiosk ' + ((state && state.appVersion) || '?') + '. Not checked yet.'; install.classList.add('hidden'); logBox.classList.add('hidden'); return; }
     $('m-channel').textContent = u.channel || '—';
+    $('auto-text').textContent = (u.available === false || u.channel === 'none')
+      ? 'This build cannot update itself. A newer version needs the SD card written again with a new image.'
+      : 'New builds install by themselves overnight; the display restarts for a few seconds.';
     if (u.phase === 'checking') { pill.textContent = 'checking…'; pill.className = 'pill'; }
     else if (u.phase === 'installing') { pill.textContent = 'installing'; pill.className = 'pill warn'; }
     else if (u.phase === 'failed') { pill.textContent = 'failed'; pill.className = 'pill bad'; }
