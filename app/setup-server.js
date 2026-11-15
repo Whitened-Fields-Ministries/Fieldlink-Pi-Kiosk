@@ -75,6 +75,10 @@ function page(status) {
 </div>
 <script>
 (function () {
+  // Reached under some other site's name (the phone's sign-in check, a tab that
+  // was already open): go to the setup address once. Only a name triggers
+  // this, never an address, so it cannot repeat.
+  if (!/^[0-9.]+$/.test(location.hostname) && location.hostname.charAt(0) !== '[') { location.replace(${JSON.stringify(`http://${HOTSPOT_ADDR}/`)}); return; }
   var $ = function (id) { return document.getElementById(id); };
   var selected = null, secured = true, submitted = false;
   function bars(sig) { var n = sig >= 75 ? 4 : sig >= 55 ? 3 : sig >= 35 ? 2 : 1, h = '<span class="bars">'; for (var i = 1; i <= 4; i++) h += '<i class="' + (i <= n ? 'on' : '') + '" style="height:' + (i * 25) + '%"></i>'; return h + '</span>'; }
@@ -167,7 +171,13 @@ function validate(ssid, password) {
 // visits read the network list or change the display's Wi-Fi.
 function hostAllowed(host, allowedHosts) {
   const h = String(host || '').trim().toLowerCase().replace(/:80$/, '');
-  return allowedHosts.includes(h);
+  // An address rather than a name is always this machine itself: a page from
+  // another site cannot make the browser say "Host: <address>" for a request
+  // it can read (that request is cross-origin and carries its own Origin).
+  return allowedHosts.includes(h) || isAddress(h);
+}
+function isAddress(h) {
+  return /^(\d{1,3}\.){3}\d{1,3}(:\d{1,5})?$/.test(h) || /^\[[0-9a-f:.]+\](:\d{1,5})?$/.test(h);
 }
 function originAllowed(origin, allowedHosts) {
   if (origin == null) return true;                // same-origin navigations and fetches without an Origin header
@@ -207,8 +217,12 @@ function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
     const ours = hostAllowed(req.headers.host, hosts) && originAllowed(req.headers.origin, hosts);
     if (path.startsWith('/api/') && !ours) return json(403, { ok: false, error: 'Open http://10.42.0.1/ on the setup network.' });
 
+    // The page itself is never answered with a redirect, whatever name it was
+    // asked for under. Every redirect this server sends points at "/", so a
+    // redirect on "/" is the only way it could ever send a browser in circles
+    // (ERR_TOO_MANY_REDIRECTS); the page moves itself to the setup address
+    // with one line of script instead (see the top of its script).
     if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
-      if (!hostAllowed(req.headers.host, hosts)) return send(302, `<a href="${setupUrl}">FieldLink display setup</a>`, 'text/html; charset=utf-8', { Location: setupUrl });
       return send(200, page(await backend.getStatus()), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'" });
     }
     if (req.method === 'GET' && path === '/api/networks') return json(200, await backend.getNetworks());

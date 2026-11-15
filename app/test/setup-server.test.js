@@ -120,10 +120,21 @@ test('connect needs a JSON content type (no simple cross-site form posts)', () =
   assert.equal(backend.calls.filter(c => c !== 'touch').length, 0);
 }));
 
-test('the page itself redirects to the setup address when reached under another name', () => withServer(async port => {
+test('the page is never answered with a redirect, so the server cannot send a browser in circles', () => withServer(async port => {
+  // Under another site's name the page is served and moves itself with script.
   const r = await request(port, 'GET', '/', null, { Host: 'neverssl.com' });
-  assert.equal(r.status, 302);
-  assert.equal(r.headers.location, 'http://10.42.0.1/');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.location, undefined);
+  assert.match(r.body, /location\.replace\("http:\/\/10\.42\.0\.1\/"\)/);
+  // Whatever Host a request for "/" carries, the answer is the page.
+  for (const host of ['10.42.0.1', '10.42.0.1:80', '10.42.0.5', 'fieldlink.setup', 'connectivitycheck.gstatic.com', '']) {
+    const x = await request(port, 'GET', '/', null, host ? { Host: host } : {});
+    assert.equal(x.status, 200, `GET / with Host "${host}"`);
+  }
+  // Every redirect the server does send points at "/".
+  const probe = await request(port, 'GET', '/generate_204', null, { Host: 'connectivitycheck.gstatic.com' });
+  assert.equal(probe.status, 302);
+  assert.equal(probe.headers.location, 'http://10.42.0.1/');
   const ok = await request(port, 'GET', '/');
   assert.equal(ok.status, 200);
   assert.match(ok.headers['content-security-policy'], /default-src 'none'/);
@@ -134,6 +145,10 @@ test('hostAllowed and originAllowed', () => {
   assert.equal(hostAllowed('10.42.0.1', ['10.42.0.1']), true);
   assert.equal(hostAllowed('10.42.0.1:80', ['10.42.0.1']), true);
   assert.equal(hostAllowed('10.42.0.1.evil.example', ['10.42.0.1']), false);
+  assert.equal(hostAllowed('10.42.0.7', ['10.42.0.1']), true);          // any address is this machine
+  assert.equal(hostAllowed('192.168.4.1:8080', ['10.42.0.1']), true);
+  assert.equal(hostAllowed('evil.example', ['10.42.0.1']), false);
+  assert.equal(hostAllowed('10.42.0.1.', ['10.42.0.1']), false);
   assert.equal(hostAllowed(undefined, ['10.42.0.1']), false);
   assert.equal(originAllowed(undefined, ['10.42.0.1']), true);
   assert.equal(originAllowed('http://10.42.0.1', ['10.42.0.1']), true);
