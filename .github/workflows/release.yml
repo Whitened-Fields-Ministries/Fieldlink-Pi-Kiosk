@@ -193,7 +193,10 @@ jobs:
           stage-list: stage0 stage1 stage2 ./image/stage-fieldlink
           export-last-stage-only: true
           compression: xz
-          compression-level: 6
+          # Compressing the finished image was 4 of the image build's 9 minutes
+          # at level 6 (v0.3.5-qa run). Level 2 is several times faster for a
+          # somewhat larger download, and no slower to flash.
+          compression-level: 2
           hostname: fieldlink-kiosk
           locale: en_US.UTF-8
           keyboard-keymap: us
