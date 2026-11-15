@@ -31,6 +31,26 @@ so a deployed kiosk is never reflashed for a new build.
    Everything the display remembers is in that one directory.
 5. If the app exits (crash, Ctrl+Shift+Q), systemd restarts it after 3 s.
 
+## Display scale
+
+The kiosk page and the settings screen are laid out for a 1080p TV, and cage drives the TV at its
+native resolution with no scaling, so a 4K TV would show everything at half size. The app
+(`app/display-scale.js`) magnifies the pages by **the screen's short side in physical pixels ÷ 1080**,
+rounded to 5 % steps and kept between 0.5× and 4×:
+
+| Screen | Scale | The page sees |
+|---|---|---|
+| 1280 × 720 | 0.65× | about 1970 × 1108 |
+| 1920 × 1080 | 1× | 1920 × 1080 |
+| 2560 × 1440 | 1.35× | about 1896 × 1067 |
+| 3840 × 2160 | 2× | 1920 × 1080 |
+
+So every screen shows the layout a 1080p screen shows, drawn with all the pixels the TV has. The
+short side is used so a portrait screen scales like its landscape twin. It is applied as the page
+zoom on every page load and again when the screen changes. To pin a size (a TV far across a hall),
+put `"displayScale": 1.5` in `/var/lib/fieldlink-kiosk/config.json`; the change applies at once.
+*Details* on the settings screen shows the resolution and the scale in use.
+
 ## Wi‑Fi from a phone (milestone 2)
 
 With no network cable and no Wi‑Fi the display cannot even ask for a pairing code, so the app

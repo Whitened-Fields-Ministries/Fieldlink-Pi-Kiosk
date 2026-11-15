@@ -1,3 +1,4 @@
 {
-  "kioskUrl": "https://app.fieldlinkmissions.com/kiosk?key=PLACEHOLDER"
+  "kioskUrl": "https://app.fieldlinkmissions.com/kiosk?key=PLACEHOLDER",
+  "displayScale": "auto"
 }

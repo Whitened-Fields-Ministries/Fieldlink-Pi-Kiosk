@@ -213,6 +213,7 @@
       <b>Config file</b><span id="m-config">—</span>
       <b>Log file</b><span id="m-log">—</span>
       <b>Device</b><span id="m-host">—</span>
+      <b>Screen</b><span id="m-screen">—</span>
       <b>App</b><span id="m-app">—</span>
     </div>
     </details>
@@ -334,6 +335,7 @@
     setText('m-config', s.configSource || ('none yet — will be created at ' + (s.configTargets && s.configTargets[0])));
     setText('m-log', s.logPath || '—');
     setText('m-host', (s.hostname || '—') + ' · ' + (s.platform || ''));
+    setText('m-screen', s.display && s.display.width ? s.display.width + ' × ' + s.display.height + ' · shown at ' + s.display.scale + '× (' + (s.display.pinned ? 'set in config.json' : 'calculated from the resolution') + ')' : '—');
     setText('m-app', 'FieldLinkPiKiosk ' + (s.appVersion || '?') + ' · Electron ' + (s.electron || '?'));
     if (!$('server').value) $('server').value = s.server || (s.pair && s.pair.origin) || s.defaultServer || '';
     renderPair(s.pair);
