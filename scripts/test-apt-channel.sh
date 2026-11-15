@@ -4,6 +4,8 @@
 #
 #   scripts/test-apt-channel.sh
 #
+#   0. An empty signed repository (a channel before its first release) must
+#      be readable: apt-get update succeeds and offers nothing.
 #   1. scripts/apt-repo.sh builds and signs a repository holding version 0.0.1;
 #      scripts/verify-apt-channel.sh reads it through apt over HTTP.
 #   2. The repository is replaced by 0.0.2 (what a release does to the channel):
@@ -41,6 +43,8 @@ PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); p
 ( cd "$T" && exec python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$T/www" >/dev/null 2>&1 ) & SRV=$!
 for _ in $(seq 50); do python3 -c "import socket; socket.create_connection(('127.0.0.1',$PORT),1)" 2>/dev/null && break; sleep 0.1; done
 
+echo "── 0. a channel before its first release (empty, signed) is readable"
+publish; verify none
 echo "── 1. a signed channel is read"
 publish "$(deb 0.0.1)"; verify 0.0.1
 echo "── 2. a newer release replaces it"
