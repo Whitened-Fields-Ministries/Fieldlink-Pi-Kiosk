@@ -141,3 +141,24 @@ test('hostAllowed and originAllowed', () => {
   assert.equal(originAllowed('null', ['10.42.0.1']), false);
   assert.equal(originAllowed('http://evil.example', ['10.42.0.1']), false);
 });
+
+test('every answer closes its connection and the first hit of each kind is logged', async () => {
+  const lines = [];
+  const srv = createSetupServer({ backend: { getNetworks: async () => ({ networks: [] }), getStatus: async () => ({ phase: 'hotspot', hotspot: { ssid: 'FieldLink-TEST' } }), connect: async () => {} }, log: l => lines.push(l) });
+  const { port } = await srv.start(0, '127.0.0.1');
+  try {
+    const get = (path, host) => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path, method: 'GET', headers: host ? { Host: host } : {} }, res => { res.resume(); res.on('end', () => resolve(res)); });
+      req.on('error', reject); req.end();
+    });
+    const probe = await get('/generate_204', 'connectivitycheck.gstatic.com');
+    assert.equal(probe.statusCode, 302);
+    assert.equal(probe.headers.connection, 'close');
+    assert.equal((await get('/')).headers.connection, 'close');
+    assert.equal((await get('/api/networks')).headers.connection, 'close');
+    await get('/generate_204', 'connectivitycheck.gstatic.com');
+    const probeLines = lines.filter(l => l.includes('connectivitycheck.gstatic.com/generate_204'));
+    assert.equal(probeLines.length, 1, 'a repeated probe is logged once');
+    assert.match(probeLines[0], /→ 302/);
+  } finally { await srv.stop(); }
+});
