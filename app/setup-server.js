@@ -10,7 +10,8 @@
 // backend interface (implemented in main.js):
 //   getNetworks()            → { networks: [{ssid, signal, secured, band}], scannedAt }
 //   getStatus()              → { phase, ssid, error, hotspot: {ssid} }
-//   connect(ssid, password)  → Promise<void>  (starts the join; the page never waits for it)
+//   connect(ssid, password, { timezone })  → Promise<void>  (starts the join; the page never
+//                            waits for it; timezone is the phone's zone name or null)
 //   touch()                  → called on every page hit (keeps the hotspot alive)
 
 const http = require('http');
@@ -95,6 +96,8 @@ function page(status) {
     $('list').classList.add('hidden'); $('form').classList.remove('hidden'); $('msg').textContent = '';
     (ssid ? $('pass') : $('ssid')).focus();
   }
+  // The phone is standing next to the display, so its time zone is the display's.
+  function zone() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { return null; } }
   function load() {
     $('networks').innerHTML = '<li class="small">Loading…</li>';
     fetch('/api/networks', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { render(j.networks || []); })
@@ -110,7 +113,7 @@ function page(status) {
     if (!ssid) { $('msg').textContent = 'Enter the network name.'; $('msg').className = 'msg bad'; return; }
     if (secured && pass.length < 8) { $('msg').textContent = 'Wi‑Fi passwords are at least 8 characters.'; $('msg').className = 'msg bad'; return; }
     submitted = true; $('go').disabled = true; $('msg').textContent = 'Sending to the display…'; $('msg').className = 'msg';
-    fetch('/api/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ssid: ssid, password: pass }) })
+    fetch('/api/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ssid: ssid, password: pass, timezone: zone() }) })
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (x) {
         if (!x.ok) { submitted = false; $('go').disabled = false; $('msg').textContent = (x.j && x.j.error) || 'That did not work.'; $('msg').className = 'msg bad'; return; }
@@ -140,6 +143,12 @@ function readJson(req, limit) {
     req.on('end', () => { if (over) return reject(new Error('body too large')); try { resolve(body ? JSON.parse(body) : {}); } catch (e) { reject(new Error('invalid JSON')); } });
     req.on('error', reject);
   });
+}
+
+// An IANA zone name ("America/Chicago") or null. Never an error: a phone that
+// sends nothing usable just leaves the display's time zone as it is.
+function cleanTimezone(value) {
+  return typeof value === 'string' && value.length <= 64 && /^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+){0,2}$/.test(value) ? value : null;
 }
 
 function validate(ssid, password) {
@@ -215,7 +224,7 @@ function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
       log(`setup-server: connect requested for "${body.ssid}"`);
       // Answer first so the phone sees the confirmation before the hotspot drops.
       json(200, { ok: true });
-      Promise.resolve().then(() => backend.connect(String(body.ssid).trim(), body.password || '')).catch(e => log(`setup-server: connect failed: ${e && e.message || e}`)).finally(() => { connecting = false; });
+      Promise.resolve().then(() => backend.connect(String(body.ssid).trim(), body.password || '', { timezone: cleanTimezone(body.timezone) })).catch(e => log(`setup-server: connect failed: ${e && e.message || e}`)).finally(() => { connecting = false; });
       return;
     }
     // Captive-portal probes (Android generate_204, Apple hotspot-detect,
@@ -257,4 +266,4 @@ function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
   };
 }
 
-module.exports = { createSetupServer, page, validate, hostAllowed, originAllowed };
+module.exports = { createSetupServer, page, validate, cleanTimezone, hostAllowed, originAllowed };

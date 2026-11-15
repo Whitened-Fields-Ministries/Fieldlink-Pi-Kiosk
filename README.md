@@ -74,6 +74,9 @@ rule in the package allows the `kiosk` user to):
 5. Ethernet plugged in at any point wins: the hotspot goes down as soon as the Pi is online.
 6. With nobody on the setup page for 10 minutes and a saved network on file, the hotspot pauses
    for 45 s so a rebooted router can be rejoined without anyone touching the display.
+7. The setup page listens on every address and is started again by the network loop whenever
+   the hotspot is up and the page is not, so a hotspot that comes back after a failed join
+   always has its page.
 
 A keyboard gets the same picker on the TV (*Use a keyboard instead*), and the Ctrl+Shift+K screen
 has a Wi‑Fi block (current network, *Change network*, *Set up from a phone*).
@@ -144,13 +147,20 @@ A deployed kiosk gets new builds through apt, never through a new card:
 - **System updates.** The same nightly run (`/etc/apt/apt.conf.d/52fieldlink-kiosk`) installs every
   Debian update for the release (fixes and security) and Raspberry Pi's own packages: kernel,
   firmware, bootloader tools. A timer drop-in moves the run from Debian's 6 to 7 a.m. to about
-  3 a.m. (image time zone, US Eastern), and the Pi restarts straight after an update that needs it
+  3 a.m. **local time** (see *Time zone* below), and the Pi restarts straight after an update that needs it
   (a new kernel), so that happens while the building is empty. Config-file questions are answered
   "keep the current file"; an interrupted run is repaired on the next one. This does not depend
   on the signing key: a build without an update channel still takes system updates, only the
   display program stays as flashed. The settings screen shows how many system updates are waiting
   and whether a restart is pending. The image build fails if either archive stops announcing the
   origin the policy matches (`o=Debian`, `o=Raspberry Pi Foundation`).
+- **Time zone.** Every image starts in US Eastern, and "3 a.m." is in the system time zone, so the
+  display sets its own: the phone that sets up Wi‑Fi sends its zone along with the network (it is
+  standing next to the display), and a FieldLink server that sends `timezone` with the key check
+  or at linking overrides it. `root-helper timezone <Area/City>` validates the name against
+  `/usr/share/zoneinfo` and sets it; the update timer follows. *Details* on the settings screen
+  shows the zone in use. A display set up on Ethernet only, with a server that sends no zone,
+  stays on US Eastern: `sudo timedatectl set-timezone …` over ssh until the server sends one.
 - What still needs a new image: a move to the next Debian release (trixie → forky). Nothing else.
 - Read-only root was in the original plan and is **not** done: an overlay root discards apt
   updates on reboot unless every update also remounts and writes the lower layer, which is what
