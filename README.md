@@ -77,7 +77,7 @@ create a `pi` user and put the wizard's keyboard dialog on the TV instead of the
 
 A deployed kiosk gets new builds through apt, never through a new card:
 
-- The package ships `/etc/apt/sources.list.d/fieldlink.sources` (a signed **flat** apt repository
+- The package writes `/etc/apt/sources.list.d/fieldlink.sources` at install (a signed **flat** apt repository
   held as the assets of the `apt-prod` GitHub release), the repository's public key in
   `/etc/apt/keyrings/`, and an `unattended-upgrades` policy that takes packages from the FieldLink
   origin and Debian security nightly (apt's daily timers). The package's `postinst` restarts the
@@ -104,6 +104,18 @@ A deployed kiosk gets new builds through apt, never through a new card:
   update channel** and the publish step is skipped; the first release after adding it is the one
   kiosks start updating from, so it should ship in a QA/prod image (a package without the channel
   cannot learn about it later).
+- **Every publish is read back.** After uploading a channel, `scripts/publish-apt.sh` runs
+  `scripts/verify-apt-channel.sh`, which reads it through apt exactly as a kiosk does (the
+  package's own source entry and key, a private apt root): the signature must verify, the candidate
+  must be the version just released, and the `.deb` must match the signed index. A channel kiosks
+  could not install from fails the release run. Pull requests run `scripts/test-apt-channel.sh`:
+  the same scripts against a throwaway key and stand-in packages, including a newer release
+  replacing an older one and a tampered index or foreign key being refused.
+- The apt source is not a conffile: the postinst rewrites it from the package's template and keeps
+  the channel the display is on, so a display moved to `qa` stays there across updates and a
+  nightly update never stops to ask about a changed file.
+- A QA retry (`vX.Y.Z-qa.2`) has the same package version, so displays already on `X.Y.Z` do not
+  take it. Bump the version when deployed QA displays must pick up a change.
 - What still needs a new image: kernel, firmware and anything under `/boot/firmware`. Those come
   from the Raspberry Pi archive and are deliberately not auto-installed (they need a reboot).
 - Read-only root was in the original plan and is **not** done: an overlay root discards apt
@@ -312,9 +324,19 @@ runs it through [usimd/pi-gen-action](https://github.com/usimd/pi-gen-action) wi
 
 ## Signing key for the update channel
 
-Updates through apt need the repository's signing key: the public half committed as
-`app/debian/fieldlink-apt.public.asc`, the private half as the `APT_SIGNING_KEY` Actions secret.
-`docs/apt-signing.md` has the commands. **The key has not been added yet**, so every build so
-far (through 0.3.3) ships without an update channel: its settings screen says so under *Updates*,
-and a display flashed from one of those images needs a new card to get a newer build. The first
-release tagged after the key file is committed is the first one that updates itself.
+The channel needs one signing key, made once by a person:
+
+```bash
+scripts/make-apt-key.sh
+```
+
+It creates the key in a scratch keyring, writes the public half to
+`app/debian/fieldlink-apt.public.asc`, sets the `APT_SIGNING_KEY` Actions secret through the GitHub
+CLI when that is signed in (otherwise it says where to paste it), leaves a backup of the private
+half for a password manager, and prints the remaining steps. `docs/apt-signing.md` has the
+background and the rotation procedure.
+
+**Until that file is committed, builds ship without an update channel**: the QA release run warns,
+the settings screen says so under *Updates*, and a display flashed from such an image needs a new
+card for every later build. That is every image up to and including 0.3.2. The first release
+tagged after the key is on `main` is the first one that updates itself.

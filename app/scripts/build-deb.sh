@@ -43,7 +43,7 @@ echo "==> assembling package tree"
 install -d "$ROOT/DEBIAN" "$ROOT/opt" "$ROOT/usr/bin" "$ROOT/usr/lib/systemd/system" \
   "$ROOT/etc/pam.d" "$ROOT/etc/polkit-1/rules.d" "$ROOT/etc/NetworkManager/dnsmasq-shared.d" \
   "$ROOT/etc/sysctl.d" "$ROOT/usr/lib/fieldlink-kiosk" "$ROOT/etc/sudoers.d" "$ROOT/etc/apt/apt.conf.d" \
-  "$ROOT/etc/apt/sources.list.d" "$ROOT/etc/apt/keyrings" "$ROOT/usr/share/doc/$NAME"
+  "$ROOT/etc/apt/keyrings" "$ROOT/usr/share/fieldlink-kiosk" "$ROOT/usr/share/doc/$NAME"
 cp -a "$APP_SRC" "$ROOT/opt/$NAME"
 # packager leaves its output directory 0700; the app runs as the kiosk user.
 chmod 0755 "$ROOT/opt/$NAME"
@@ -67,11 +67,14 @@ CONFFILES=(/etc/pam.d/fieldlink-kiosk /etc/polkit-1/rules.d/50-fieldlink-kiosk.r
 if [ -f debian/fieldlink-apt.public.asc ]; then
   gpg --batch --yes --dearmor --output "$ROOT/etc/apt/keyrings/fieldlink-apt.gpg" debian/fieldlink-apt.public.asc
   chmod 0644 "$ROOT/etc/apt/keyrings/fieldlink-apt.gpg"
-  install -m 0644 debian/fieldlink.sources "$ROOT/etc/apt/sources.list.d/fieldlink.sources"
-  CONFFILES+=(/etc/apt/sources.list.d/fieldlink.sources)
+  # The apt source itself is written by the postinst from this template. It is
+  # not a conffile: the display rewrites it when its server names another
+  # channel (root-helper channel), and a conffile changed on the device would
+  # make a later package that changes it stop the nightly update to ask.
+  install -m 0644 debian/fieldlink.sources "$ROOT/usr/share/fieldlink-kiosk/fieldlink.sources"
   echo "==> update channel included (debian/fieldlink-apt.public.asc)"
 else
-  rmdir "$ROOT/etc/apt/keyrings" "$ROOT/etc/apt/sources.list.d" 2>/dev/null || true
+  rmdir "$ROOT/etc/apt/keyrings" "$ROOT/usr/share/fieldlink-kiosk" 2>/dev/null || true
   echo "==> WARNING: debian/fieldlink-apt.public.asc missing — package built WITHOUT an update channel"
 fi
 install -m 0644 debian/copyright "$ROOT/usr/share/doc/$NAME/copyright"

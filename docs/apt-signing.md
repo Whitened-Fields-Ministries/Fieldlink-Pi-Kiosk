@@ -1,12 +1,21 @@
-# Signing key for the apt repository (milestone 3)
+# Signing key for the update channel
 
-Milestone 3 ships app updates to installed Pis through a small apt repository
-pulled nightly by `unattended-upgrades`. apt refuses unsigned repositories, so
-the repository index must be signed with a GPG key that the image trusts. The
-key is created **once, by a person, on their own machine**; the private half is
-stored as a GitHub Actions secret and the public half is baked into the image.
-Nothing in milestone 1 or 2 uses it. Generate it whenever convenient so the
-secret is ready.
+Installed Pis take new builds from a small apt repository, pulled nightly by
+`unattended-upgrades`. apt refuses unsigned repositories, so the repository index
+is signed with a GPG key that every package carries the public half of. The key is
+created **once, by a person, on their own machine**; the private half is stored as a
+GitHub Actions secret. Until it exists, builds ship without an update channel.
+
+## The short way
+
+```bash
+scripts/make-apt-key.sh
+```
+
+does steps 1 to 3 below in one go (scratch keyring, both halves exported and checked against each
+other, the secret set through the GitHub CLI when it is signed in) and prints what is left: commit
+the public half, move the private backup into a password manager. The steps are kept here for
+doing it by hand and for understanding what the script did.
 
 ## 1. Generate the key
 
@@ -62,7 +71,9 @@ signed *flat* apt repository (`Packages`, `Release`, `InRelease`, the `.deb` fil
 `/etc/apt/sources.list.d/fieldlink.sources`, trust only this key, and
 `unattended-upgrades` installs new builds overnight (plus Debian security fixes).
 The settings screen can check and install on demand and switch a bench Pi to the
-`qa` channel.
+`qa` channel. After every publish the channel is read back through apt
+(`scripts/verify-apt-channel.sh`); `scripts/test-apt-channel.sh` proves the same path on
+every pull request with a throwaway key.
 
 Rotating the key means: new key pair, replace `app/debian/fieldlink-apt.public.asc` and
 the secret, ship one release signed with the **old** key that carries the new public key

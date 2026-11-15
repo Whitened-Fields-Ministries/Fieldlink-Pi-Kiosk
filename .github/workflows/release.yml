@@ -266,12 +266,20 @@ jobs:
           curl -fsS -X POST "${SERVER_URL%/}/api/kiosk/installer/invalidate" -H "x-webhook-secret: $WEBHOOK_SECRET" -H 'Content-Type: application/json' \
             && echo "FieldLink QA server cache invalidated" || echo "::warning::cache invalidation skipped ($SERVER_URL did not accept it; the server refreshes within an hour anyway)"
 
+      # Publishes, then reads the channel back through apt the way a kiosk does.
       - name: Publish the .deb to the apt-qa channel
         if: hashFiles('app/debian/fieldlink-apt.public.asc') != ''
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: scripts/publish-apt.sh qa out/*.deb
+
+      - name: Say so when this build cannot update itself
+        if: hashFiles('app/debian/fieldlink-apt.public.asc') == ''
+        run: |
+          echo "::warning::No signing key (app/debian/fieldlink-apt.public.asc): this image has no update channel. A display flashed from it needs a new card for every later build. Run scripts/make-apt-key.sh."
+          echo "### ⚠️ This build has no update channel" >> "$GITHUB_STEP_SUMMARY"
+          echo "Run \`scripts/make-apt-key.sh\` (docs/apt-signing.md) and tag again before handing this image to a church." >> "$GITHUB_STEP_SUMMARY"
 
   promote:
     name: Prod · promote the QA release

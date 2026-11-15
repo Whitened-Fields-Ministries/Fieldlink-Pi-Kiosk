@@ -30,6 +30,12 @@ jobs:
       - name: Lint packaging scripts and the unit
         run: |
           shellcheck -S warning -s sh app/debian/postinst app/debian/prerm app/debian/postrm app/debian/fieldlink-kiosk-session
-          shellcheck -S warning app/scripts/build-deb.sh image/stage-fieldlink/prerun.sh image/stage-fieldlink/00-kiosk/01-run.sh
+          shellcheck -S warning -s sh app/debian/root-helper
+          shellcheck -S warning app/scripts/build-deb.sh image/stage-fieldlink/prerun.sh image/stage-fieldlink/00-kiosk/01-run.sh scripts/*.sh
           systemd-analyze verify --man=no app/debian/fieldlink-kiosk.service 2>&1 | grep -v 'fieldlink-kiosk-session' || true
           python3 scripts/check-workflows.py .github/workflows/*.yml .github/actions/build-deb/action.yml
+      # The update channel end to end, with a throwaway key: sign a repository
+      # with the release scripts, read it through apt, replace it with a newer
+      # version, and make sure a changed index or a foreign key is refused.
+      - name: Update channel test
+        run: scripts/test-apt-channel.sh
