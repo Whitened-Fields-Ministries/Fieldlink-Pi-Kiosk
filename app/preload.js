@@ -13,6 +13,27 @@ contextBridge.exposeInMainWorld('fieldlinkKioskApp', Object.freeze({
   version: versionArg ? versionArg.slice('--flk-version='.length) : undefined,
 }));
 
+// ── Mouse pointer: tell main.js when a mouse really moves ────────────────────
+// main.js hides the pointer on every page and shows it for a few seconds after
+// this message. Only a mouse counts (a finger on a touch screen has no
+// pointer to show), and at most a few messages a second are sent.
+(function pointerActivity() {
+  let last = 0, x = null, y = null;
+  const send = () => { const now = Date.now(); if (now - last < 300) return; last = now; ipcRenderer.send('kiosk:pointer-moved'); };
+  const mouse = e => !e.pointerType || e.pointerType === 'mouse';
+  // A page that loads under a resting pointer gets a "move" from the browser
+  // although nothing moved. Only a change of position counts, and the first
+  // position seen is just where the pointer already was.
+  window.addEventListener('pointermove', e => {
+    if (!mouse(e)) return;
+    const moved = x !== null && (Math.abs(e.screenX - x) > 2 || Math.abs(e.screenY - y) > 2);
+    x = e.screenX; y = e.screenY;
+    if (moved) send();
+  }, true);
+  window.addEventListener('pointerdown', e => { if (mouse(e)) send(); }, true);
+  window.addEventListener('wheel', send, { capture: true, passive: true });
+})();
+
 // ── Corner hold: open the settings screen without a keyboard ─────────────────
 // A Pi display has no keyboard, so the Ctrl+Shift+K screen can also be opened
 // (and closed) by pressing and holding the top-left corner of the screen for

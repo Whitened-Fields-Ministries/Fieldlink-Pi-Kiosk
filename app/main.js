@@ -1077,6 +1077,41 @@ async function pollPairRequest() {
 ipcMain.handle('kiosk:pair-request', async (_e, { server } = {}) => { await startPairRequest(server); return stateForPage(); });
 
 // ── Keyboard shortcuts and the corner-hold gesture ───────────────────────────
+// ── Mouse pointer ────────────────────────────────────────────────────────────
+// A lobby display has no mouse, but the compositor draws a pointer as soon as
+// anything that could be one is plugged in (a keyboard's receiver is enough),
+// and it would sit on the map for good. The pointer is hidden on every page
+// until a mouse actually moves, and again a few seconds after it stops:
+// there when someone needs it, gone otherwise. Touch never shows it.
+// preload.js reports mouse movement; the hiding is a style sheet inserted from
+// here, which a page's own content-security policy cannot refuse.
+const POINTER_HIDE_AFTER_MS = 5000;
+const POINTER_HIDE_CSS = '*, *::before, *::after { cursor: none !important; }';
+let pointerHidden = true;       // what we want right now
+let pointerCssKey = null;       // the inserted style sheet, while hidden
+let pointerTimer = null;
+
+async function hidePointer() {
+  pointerHidden = true;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed() || pointerCssKey) return;
+  try {
+    const key = await win.webContents.insertCSS(POINTER_HIDE_CSS, { cssOrigin: 'user' });
+    // Moved again, or already hidden by another call, while this one was in flight: take it back out.
+    if (!pointerHidden || pointerCssKey) win.webContents.removeInsertedCSS(key).catch(() => {});
+    else pointerCssKey = key;
+  } catch {}
+}
+function showPointer() {
+  pointerHidden = false;
+  const key = pointerCssKey; pointerCssKey = null;
+  if (key && win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.removeInsertedCSS(key).catch(() => {});
+  if (pointerTimer) clearTimeout(pointerTimer);
+  pointerTimer = setTimeout(hidePointer, POINTER_HIDE_AFTER_MS);
+}
+// A new page starts without the style sheet: put it back unless a mouse is in use.
+function pointerOnNewPage() { pointerCssKey = null; if (pointerHidden) hidePointer(); }
+ipcMain.on('kiosk:pointer-moved', (e) => { if (win && !win.isDestroyed() && e.sender === win.webContents) showPointer(); });
+
 // The gesture itself is detected in preload.js (it needs the page's pointer
 // events); it only ever asks for the same thing Ctrl+Shift+K does.
 let smokeGestureSeen = false;
@@ -1168,6 +1203,7 @@ function createWindow() {
   // Chromium keeps zoom per site, so every page this window loads gets it again;
   // a TV swapped for another resolution is picked up without a restart.
   win.webContents.on('dom-ready', applyDisplayScale);
+  win.webContents.on('dom-ready', pointerOnNewPage);
   screen.on('display-metrics-changed', applyDisplayScale);
   screen.on('display-added', applyDisplayScale);
   screen.on('display-removed', applyDisplayScale);
@@ -1249,6 +1285,17 @@ function runSmokeTest() {
       const r = await win.webContents.executeJavaScript('document.getElementById("pair-code") ? "ok" : "missing"');
       console.log(`smoke-test: recovery screen loaded (${r}) — electron ${process.versions.electron}, ${process.arch}`);
       if (r !== 'ok') { clearTimeout(timer); return app.exit(1); }
+      // Mouse pointer: hidden while nothing moves, shown when a mouse does, hidden again after.
+      const cursorNow = () => win.webContents.executeJavaScript('getComputedStyle(document.getElementById("pair-code")).cursor');
+      const waitCursor = async (want, ms) => { const end = Date.now() + ms; let c; do { c = await cursorNow(); if ((c === 'none') === want) return true; await new Promise(res => setTimeout(res, 100)); } while (Date.now() < end); return false; };
+      const hiddenAtStart = await waitCursor(true, 3000);
+      await win.webContents.executeJavaScript("for (const x of [400, 430]) window.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: 400, screenX: x, screenY: 400, pointerType: 'mouse', bubbles: true }))");
+      const shownOnMove = await waitCursor(false, 3000);
+      await win.webContents.executeJavaScript("window.dispatchEvent(new PointerEvent('pointermove', { clientX: 500, clientY: 500, pointerType: 'touch', bubbles: true }))");
+      const hiddenAgain = await waitCursor(true, POINTER_HIDE_AFTER_MS + 3000);
+      const pointerOk = hiddenAtStart && shownOnMove && hiddenAgain;
+      console.log(`smoke-test: mouse pointer hidden at start ${hiddenAtStart}, shown on movement ${shownOnMove}, hidden again after ${POINTER_HIDE_AFTER_MS / 1000} s ${hiddenAgain} — ${pointerOk ? 'ok' : 'WRONG'}`);
+      if (!pointerOk) { clearTimeout(timer); return app.exit(1); }
       // Display scale: the page must be as wide, in its own pixels, as the window
       // divided by the zoom. The zoom lands a moment after it is set, so look a few times.
       const expected = win.getContentSize()[0] / display.zoom;
