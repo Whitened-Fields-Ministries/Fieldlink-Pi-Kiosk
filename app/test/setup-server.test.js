@@ -202,3 +202,25 @@ test('the phone\'s time zone is passed on with the join; junk is dropped', async
     assert.deepEqual(calls[1], ['ChurchWifi', 'correct horse', { timezone: null }]);
   } finally { await srv.stop(); }
 });
+
+test('a connection opened ahead of time and left idle is never answered with 408', async () => {
+  // The limits that make Node do that are off (checked directly: waiting out
+  // a real timeout would take a minute), and an idle connection is still
+  // answered properly when its request finally arrives.
+  const net = require('net');
+  const srv = createSetupServer({ backend: { getNetworks: async () => ({ networks: [] }), getStatus: async () => ({ phase: 'hotspot', hotspot: { ssid: 'FieldLink-TEST' } }), connect: async () => {} } });
+  const { port } = await srv.start(0, '127.0.0.1');
+  try {
+    const s = net.connect(port, '127.0.0.1');
+    await new Promise(r => s.once('connect', r));
+    let got = '';
+    s.on('data', d => { got += d; });
+    await new Promise(r => setTimeout(r, 1500));
+    assert.equal(got, '', 'nothing is sent to a connection that has not asked anything');
+    s.write('GET / HTTP/1.1\r\nHost: 10.42.0.1\r\n\r\n');
+    await new Promise(r => s.once('close', r));
+    assert.match(got, /^HTTP\/1\.1 200 /);
+  } finally { await srv.stop(); }
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'setup-server.js'), 'utf8');
+  for (const line of ['server.headersTimeout = 0;', 'server.requestTimeout = 0;', 'server.keepAliveTimeout = 0;']) assert.ok(src.includes(line), line);
+});
