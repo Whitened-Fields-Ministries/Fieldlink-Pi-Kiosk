@@ -254,11 +254,20 @@ function createSetupServer({ backend, log = () => {}, allowedHosts } = {}) {
         if (server) return resolve(server.address());
         hits.clear();
         server = http.createServer((req, res) => { handle(req, res).catch(e => { log(`setup-server: ${e && e.stack || e}`); try { res.writeHead(500); res.end('error'); } catch {} }); });
-        // Generous: a connection the phone opened ahead of time and has not
-        // used yet must not be cut off under it (see "Connection: close" above).
-        server.keepAliveTimeout = 5000;
-        server.requestTimeout = 120 * 1000;
-        server.headersTimeout = 60 * 1000;
+        // No idle limits. With them, Node answers a connection that has sent
+        // nothing yet with "408 Request Timeout" and closes it (after 30 s with
+        // the limits this server first had, 60 s later). Browsers open
+        // connections ahead of time, and Chrome and Edge retry a request whose
+        // already-open connection answers 408; a few of those in a row and
+        // they give up with ERR_TOO_MANY_RETRIES instead of showing the page.
+        // The phone's own sign-in window connects afresh and never saw it. On
+        // a private setup network the limits protect nothing; the connection
+        // count is capped instead.
+        server.headersTimeout = 0;
+        server.requestTimeout = 0;
+        server.keepAliveTimeout = 0;
+        server.timeout = 0;
+        server.maxConnections = 256;
         server.once('error', e => { server = null; reject(e); });
         server.listen(port, host, () => {
           const a = server.address();
