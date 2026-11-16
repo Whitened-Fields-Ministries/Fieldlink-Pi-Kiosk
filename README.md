@@ -51,6 +51,14 @@ zoom on every page load and again when the screen changes. To pin a size (a TV f
 put `"displayScale": 1.5` in `/var/lib/fieldlink-kiosk/config.json`; the change applies at once.
 *Details* on the settings screen shows the resolution and the scale in use.
 
+## Mouse pointer
+
+The compositor draws a pointer as soon as anything that could be a mouse is plugged in (a
+keyboard's receiver counts). The app hides it on every page and shows it only while a mouse is
+actually moving: it appears on movement, a click or the wheel and goes away five seconds after
+the last one. Touch never shows it. `preload.js` reports movement; `main.js` inserts and removes
+the style sheet that hides it.
+
 ## Wi‑Fi from a phone (milestone 2)
 
 With no network cable and no Wi‑Fi the display cannot even ask for a pairing code, so the app
