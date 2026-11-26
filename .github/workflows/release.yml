@@ -184,7 +184,7 @@ jobs:
 
       - name: Build with pi-gen
         id: pigen
-        uses: usimd/pi-gen-action@cec66cba86bdcd23984e6a79ea4e9251d90bc798 # v1
+        uses: usimd/pi-gen-action@9d85658bf0f4598a560b8286a5f9154afc69b154 # v2.0.0
         with:
           image-name: fieldlink-kiosk
           pi-gen-version: arm64
